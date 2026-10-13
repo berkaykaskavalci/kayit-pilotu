@@ -14,7 +14,7 @@ const TOTAL_ECTS = DATA.semesters.reduce((n, s) => n + s.ects, 0);
 // ---------------------------------------------------------------------------
 function fresh() {
   return {
-    lang: 'en',
+    lang: 'tr',
     hasProfile: false,
     profile: { status: {}, cgpa: null, semestersCompleted: 0, graduating: false },
     selected: [],
@@ -37,7 +37,7 @@ function load() {
       prefs: { ...base.prefs, ...(s.prefs || {}) },
       selected: Array.isArray(s.selected) ? s.selected : [],
       pins: s.pins && typeof s.pins === 'object' ? s.pins : {},
-      lang: s.lang === 'tr' ? 'tr' : 'en',
+      lang: s.lang === 'en' ? 'en' : 'tr',
     };
   } catch (e) {
     return base;
@@ -118,8 +118,7 @@ function derive() {
   const cls = E.classify(state.profile, DATA);
   state.selected = state.selected.filter((c) => cls[c] && E.SELECTABLE.has(cls[c].cat));
   for (const k of Object.keys(state.pins)) if (!state.selected.includes(k)) delete state.pins[k];
-  const hasRepeats = DATA.courses.some((c) => cls[c.code].failed && E.SELECTABLE.has(cls[c.code].cat));
-  const limits = E.ectsLimits(state.profile, hasRepeats);
+  const limits = E.ectsLimits(state.profile);
   const sum = E.ectsSummary(state.selected, state.profile, DATA);
   return { cls, limits, sum };
 }
@@ -155,6 +154,7 @@ function currentPlan(sch) {
 function renderChrome(d) {
   document.documentElement.lang = state.lang;
   document.title = t('app.title');
+  $('.brand-sub').textContent = t('app.sub');
   $('#tagline').textContent = t('app.tagline');
   $('#skip').textContent = t('skip');
   $('#steps').setAttribute('aria-label', t('nav.label'));
@@ -175,10 +175,8 @@ function renderBar(d) {
   if (!show) return;
   const { limits, sum } = d;
   const over = sum.total > limits.max;
-  const overNew = limits.newMax !== null && sum.newEcts > limits.newMax;
   const pct = Math.min(100, (sum.total / limits.max) * 100);
   const chips = [`<span class="chip">${t('band.' + limits.band)} · ${t('art')} ${limits.article}</span>`];
-  if (limits.newMax !== null) chips.push(`<span class="chip${overNew ? ' chip-bad' : ''}">${overNew ? '! ' : ''}${t('bar.new', { n: sum.newEcts, max: limits.newMax })}</span>`);
   if (over) chips.push(`<span class="chip chip-bad">! ${t('bar.over', { n: sum.total - limits.max })}</span>`);
   else if (sum.total > 0 && sum.total < E.MIN_ECTS && !state.profile.graduating && !(state.profile.semestersCompleted >= 8)) chips.push(`<span class="chip chip-warn">${t('bar.under', { min: E.MIN_ECTS })}</span>`);
   bar.innerHTML = `<div class="wrap bar-in">
@@ -220,11 +218,10 @@ function statusRow(c) {
 function bandLine(limits) {
   const p = state.profile;
   let s = `<strong>${t('band.' + limits.band)}</strong> — ${t('band.max', { max: limits.max })}`;
-  if (limits.newMax !== null) s += `, ${t('band.newMax', { max: limits.newMax })}`;
   s += ` <span class="art">${t('art')} ${limits.article}</span>`;
-  if (limits.band === 'unknown') s += `<br><span class="muted">${t('band.unknownHint')}</span>`;
-  if (limits.band === 'exempt') s += `<br><span class="muted">${t('band.exemptHint')}</span>`;
-  if (limits.newMaxUnclear) s += `<br><span class="muted">${t('band.unclear')}</span>`;
+  s += `<br><span class="muted">${t('band.rule')}</span>`;
+  if (limits.reason === 'noCgpa') s += `<br><span class="muted">${t('band.unknownHint')}</span>`;
+  if (limits.reason === 'early') s += `<br><span class="muted">${t('band.exemptHint')}</span>`;
   if (p.graduating || p.semestersCompleted >= 8) s += `<br><span class="muted">${t('band.noMin')}</span>`;
   return s;
 }
@@ -547,11 +544,9 @@ function checkDetail(ch) {
       return t('chk.prereq.pass', { n: ch.count });
     case 'ects': {
       const parts = [];
-      const v = { total: ch.sum.total, max: ch.limits.max, band: t('band.' + ch.limits.band), n: ch.sum.newEcts, newMax: ch.limits.newMax, over: ch.sum.total - ch.limits.max };
+      const v = { total: ch.sum.total, max: ch.limits.max, band: t('band.' + ch.limits.band), over: ch.sum.total - ch.limits.max };
       parts.push(ch.overTotal ? t('chk.ects.over', v) : t('chk.ects.ok', v));
-      if (ch.limits.newMax !== null) parts.push(ch.overNew ? t('chk.ects.newOver', v) : t('chk.ects.newOk', v));
-      if (ch.limits.band === 'unknown') parts.push(t('band.unknownHint'));
-      if (ch.limits.newMaxUnclear) parts.push(t('band.unclear'));
+      if (ch.limits.reason === 'noCgpa') parts.push(t('band.unknownHint'));
       return parts.join(' ');
     }
     case 'repeat':
@@ -633,11 +628,11 @@ function viewRules() {
     <ul class="bul">${['d1', 'd2', 'd3', 'd4'].map((k) => `<li>${t('rules.' + k)}</li>`).join('')}</ul></section>`;
   h += `<section class="card" aria-labelledby="rl-t"><h3 id="rl-t">${t('rules.listTitle')}</h3><ul class="rules">`;
   for (const r of RULES) h += `<li><span class="art">${t('art')} ${r.art}</span><span>${esc(r[L])}</span></li>`;
-  h += `</ul><p class="note">${esc(OBSERVED[L])}</p></section>`;
+  h += `</ul><p class="note">${t('rules.limitNote')}</p><p class="note">${esc(OBSERVED[L])}</p></section>`;
   h += `<section class="card" aria-labelledby="src-t"><h3 id="src-t">${t('rules.srcTitle')}</h3><p>${t('rules.collected', { date: META.collected, term: term() })}</p><ul class="bul">`;
   for (const s of META.sources) h += `<li>${t('rules.src.' + s.id)}<br><a href="${esc(s.url)}" rel="noopener noreferrer" target="_blank" class="url">${esc(s.url)}</a></li>`;
   h += `<li>${t('rules.src.timetable')}</li></ul></section>`;
-  h += `<section class="card" aria-labelledby="gap-t"><h3 id="gap-t">${t('rules.gapTitle')}</h3><ul class="bul">${['g1', 'g2', 'g3', 'g4', 'g5', 'g6'].map((k) => `<li>${t('rules.' + k)}</li>`).join('')}</ul></section>`;
+  h += `<section class="card" aria-labelledby="gap-t"><h3 id="gap-t">${t('rules.gapTitle')}</h3><ul class="bul">${['g1', 'g2', 'g3', 'g4', 'g5'].map((k) => `<li>${t('rules.' + k)}</li>`).join('')}</ul></section>`;
   return h;
 }
 
@@ -697,7 +692,7 @@ document.addEventListener('click', (e) => {
     return;
   }
   if (act === 'lang') {
-    state.lang = el.dataset.lang === 'tr' ? 'tr' : 'en';
+    state.lang = el.dataset.lang === 'en' ? 'en' : 'tr';
   } else if (act === 'sample') {
     const s = JSON.parse(JSON.stringify(SAMPLE));
     state.profile = s.profile;

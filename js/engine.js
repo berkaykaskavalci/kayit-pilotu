@@ -4,7 +4,9 @@
 export const FIRST_HOUR = 8; // first lesson starts 08:40
 export const LAST_HOUR = 21; // last lesson starts 21:40 and ends 22:30
 export const MIN_ECTS = 20;
-export const MAX_ECTS = 40;
+export const NORMAL_MAX_ECTS = 32; // normal maximum semester load
+export const HIGH_MAX_ECTS = 40; // maximum when CGPA >= HIGH_CGPA
+export const HIGH_CGPA = 2.0;
 
 // ---------------------------------------------------------------------------
 // Time helpers. A slot is { d: 0..6 (Mon..Sun), h: start hour }. Each slot is a
@@ -79,33 +81,27 @@ export function passedSet(profile) {
 // ---------------------------------------------------------------------------
 // CGPA status and ECTS limits.
 // ---------------------------------------------------------------------------
+/**
+ * 'high'   = CGPA 2.00 or above (up to 40 ECTS)
+ * 'normal' = everything else (up to 32 ECTS): CGPA below 2.00, no CGPA entered,
+ *            or no CGPA yet in the first two semesters (Art. 22(2))
+ */
 export function cgpaBand(cgpa, semestersCompleted) {
-  if (!(semestersCompleted >= 2)) return 'exempt'; // Art. 22(2)
-  if (cgpa === null || cgpa === undefined || Number.isNaN(cgpa)) return 'unknown';
-  if (cgpa >= 2.0) return 'successful';
-  if (cgpa >= 1.75) return 'probation';
-  return 'unsuccessful';
+  if (cgpa === null || cgpa === undefined || Number.isNaN(cgpa)) return 'normal';
+  return cgpa >= HIGH_CGPA ? 'high' : 'normal';
 }
 
 /**
- * max    = total ECTS allowed this semester
- * newMax = cap on ECTS of courses never taken before (null = no separate cap)
- * newMaxUnclear = the source does not say how many new courses are allowed
+ * max    = total ECTS allowed this semester (40 with CGPA >= 2.00, otherwise 32)
+ * reason = why the normal maximum applies without a CGPA below 2.00:
+ *          'noCgpa' (none entered) or null
  */
-export function ectsLimits(profile, hasRepeats) {
+export function ectsLimits(profile) {
+  const noCgpa = profile.cgpa === null || profile.cgpa === undefined || Number.isNaN(profile.cgpa);
   const band = cgpaBand(profile.cgpa, profile.semestersCompleted);
-  switch (band) {
-    case 'successful':
-      return { band, max: 40, newMax: null, newMaxUnclear: false, article: '23' };
-    case 'probation':
-      return { band, max: 32, newMax: 20, newMaxUnclear: false, article: '24(1), 24(4)' };
-    case 'unsuccessful':
-      return { band, max: 32, newMax: hasRepeats ? null : 20, newMaxUnclear: !!hasRepeats, article: '24(2), 24(5)' };
-    case 'exempt':
-      return { band, max: MAX_ECTS, newMax: null, newMaxUnclear: false, article: '22(1), 22(2)' };
-    default:
-      return { band, max: MAX_ECTS, newMax: null, newMaxUnclear: false, article: '22(1)' };
-  }
+  if (band === 'high') return { band, max: HIGH_MAX_ECTS, reason: null, article: '23' };
+  if (noCgpa) return { band, max: NORMAL_MAX_ECTS, reason: 'noCgpa', article: '22(1)' };
+  return { band, max: NORMAL_MAX_ECTS, reason: null, article: '24(1), 24(2)' };
 }
 
 // ---------------------------------------------------------------------------
@@ -143,14 +139,11 @@ export function classify(profile, data) {
 
 export function ectsSummary(selected, profile, data) {
   let total = 0;
-  let repeatEcts = 0;
   for (const code of selected) {
     const c = data.courseMap[code];
-    if (!c) continue;
-    total += c.ects;
-    if ((profile.status || {})[code] === 'failed') repeatEcts += c.ects;
+    if (c) total += c.ects;
   }
-  return { total, repeatEcts, newEcts: total - repeatEcts };
+  return { total };
 }
 
 // ---------------------------------------------------------------------------
@@ -408,17 +401,14 @@ export function preflight({ selected, profile, data, feasible }) {
   checks.push({ id: 'prereq', article: '28(c)', state: blocked.length ? 'fail' : 'pass', blocked, count: selected.length });
 
   // 3. ECTS limit — Art. 23 / 24
-  const failedSelectable = data.courses.some((c) => cls[c.code].failed && SELECTABLE.has(cls[c.code].cat));
-  const limits = ectsLimits(profile, failedSelectable);
+  const limits = ectsLimits(profile);
   const sum = ectsSummary(selected, profile, data);
   const overTotal = sum.total > limits.max;
-  const overNew = limits.newMax !== null && sum.newEcts > limits.newMax;
   checks.push({
     id: 'ects',
     article: limits.article,
-    state: overTotal || overNew ? 'fail' : limits.band === 'unknown' || limits.newMaxUnclear ? 'warn' : 'pass',
+    state: overTotal ? 'fail' : limits.reason === 'noCgpa' ? 'warn' : 'pass',
     overTotal,
-    overNew,
     limits,
     sum,
   });
