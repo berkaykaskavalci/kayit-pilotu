@@ -16,7 +16,8 @@ timetable of the Mechanical Engineering programme.
    A fictional sample student can be loaded with one click.
 2. **What can I take this semester?** – every course is sorted into: must repeat first, eligible, blocked by a
    prerequisite (showing exactly which one is missing), not offered this term, already passed. Your ECTS limit
-   (successful / probation / unsuccessful) is shown with its article number, with a live counter.
+   (up to 40 ECTS with a CGPA of 2.00 or above, otherwise up to 32 ECTS) is shown with its article number, with a
+   live counter.
 3. **Schedule builder** – tick the courses you want; the app enumerates all section combinations without a time
    overlap, ranks them by your preferences (fewest days on campus, no lessons before 10:40, fewest idle gaps,
    free weekend) and shows them on a weekly grid. You can page through the alternatives and pin a section.
@@ -24,7 +25,7 @@ timetable of the Mechanical Engineering programme.
 4. **Pre-flight check + export** – a pass/fail checklist (no overlap, prerequisites, ECTS limit, repeat-first rule,
    20 ECTS minimum), each citing its article, then a "copy for OBS / send to advisor" text and a print view.
 
-The interface is available in English and Turkish. Course names are shown in Turkish, as in the source.
+The interface is in Turkish by default, with an EN/TR toggle (the stored choice wins). Course names are shown in Turkish, as in the source.
 
 ## Data sources
 
@@ -67,8 +68,9 @@ under a sub-path such as GitHub Pages.
 - SOFL 1101 / SOFL 1102 sections were not captured: their ECTS can be counted, but their times are not checked.
 - The A/B group of each department elective and the university elective list are not in the data.
 - Grades are not tracked, so repeating passed courses (C-, D+, D) is not modelled.
-- For unsuccessful students who have courses to repeat, the source does not state a cap on new courses; the app
-  enforces only the 32 ECTS total and says so.
+- The 32 / 40 ECTS limits (40 with a CGPA of 2.00 or above, otherwise 32; 32 also when no CGPA is entered or in the
+  first two semesters) reflect current practice as reported by students, not the 2016 regulation text. Confirm them
+  with your advisor. The app has no separate cap on new courses.
 - Only the Mechanical Engineering programme and the 2026-2027 Fall term are covered.
 
 ## Team

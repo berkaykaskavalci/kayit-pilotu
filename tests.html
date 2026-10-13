@@ -81,21 +81,28 @@
 
       // ------------------------------------------------------------------
       group('CGPA bands and ECTS limits');
-      eq(E.cgpaBand(2.0, 4), 'successful', 'CGPA 2.00 is successful');
-      eq(E.cgpaBand(3.4, 4), 'successful', 'CGPA 3.40 is successful');
-      eq(E.cgpaBand(1.99, 4), 'probation', 'CGPA 1.99 is probation');
-      eq(E.cgpaBand(1.75, 4), 'probation', 'CGPA 1.75 is probation');
-      eq(E.cgpaBand(1.74, 4), 'unsuccessful', 'CGPA 1.74 is unsuccessful');
-      eq(E.cgpaBand(1.2, 1), 'exempt', 'status rules do not apply before the end of the 2nd semester');
-      eq(E.cgpaBand(null, 4), 'unknown', 'missing CGPA is reported as unknown');
-      const lim = (cgpa, rep) => { const l = E.ectsLimits({ cgpa, semestersCompleted: 4 }, rep); return [l.max, l.newMax, l.article]; };
-      eq(lim(2.5, false), [40, null, '23'], 'successful: 40 ECTS, Art. 23');
-      eq(lim(1.8, true), [32, 20, '24(1), 24(4)'], 'probation: 32 ECTS of which 20 new, Art. 24(1),(4)');
-      eq(lim(1.5, false), [32, 20, '24(2), 24(5)'], 'unsuccessful with nothing to repeat: 20 ECTS new');
-      eq(lim(1.5, true), [32, null, '24(2), 24(5)'], 'unsuccessful with repeats: 32 ECTS total');
-      ok(E.ectsLimits({ cgpa: 1.5, semestersCompleted: 4 }, true).newMaxUnclear, 'unsuccessful with repeats flags the unclear new-course cap');
-      eq(E.ectsLimits({ cgpa: 1.0, semestersCompleted: 1 }, false).max, 40, 'first-year student: general 40 ECTS maximum');
-      eq(E.ectsSummary(['MATH2263', 'ME3220'], sample(), DATA), { total: 12, repeatEcts: 7, newEcts: 5 }, 'ECTS summary separates repeated and new courses');
+      eq(E.cgpaBand(2.0, 4), 'high', 'CGPA 2.00 is in the 40 ECTS band');
+      eq(E.cgpaBand(3.4, 4), 'high', 'CGPA 3.40 is in the 40 ECTS band');
+      eq(E.cgpaBand(1.99, 4), 'normal', 'CGPA 1.99 is in the normal band');
+      eq(E.cgpaBand(1.2, 1), 'normal', 'first two semesters use the normal band');
+      eq(E.cgpaBand(null, 4), 'normal', 'missing CGPA uses the normal band');
+      const maxFor = (cgpa, sem = 4) => E.ectsLimits({ cgpa, semestersCompleted: sem }).max;
+      eq(maxFor(2.0), 40, 'CGPA 2.00 -> 40 ECTS');
+      eq(maxFor(2.5), 40, 'CGPA 2.50 -> 40 ECTS');
+      eq(maxFor(1.99), 32, 'CGPA 1.99 -> 32 ECTS');
+      eq(maxFor(1.75), 32, 'CGPA 1.75 -> 32 ECTS');
+      eq(maxFor(1.74), 32, 'CGPA 1.74 -> 32 ECTS');
+      eq(maxFor(1.0), 32, 'CGPA 1.00 -> 32 ECTS');
+      eq(maxFor(null), 32, 'no CGPA entered -> 32 ECTS');
+      eq(maxFor(1.0, 1), 32, 'first-year student -> 32 ECTS');
+      eq(maxFor(null, 0), 32, 'first-semester student without CGPA -> 32 ECTS');
+      eq(maxFor(2.5, 0), 40, 'CGPA 2.50 -> 40 ECTS even when semesters completed is left at 0');
+      eq(E.ectsLimits({ cgpa: 2.5, semestersCompleted: 4 }).article, '23', 'CGPA 2.00 or above cites Art. 23');
+      eq(E.ectsLimits({ cgpa: 1.5, semestersCompleted: 4 }).reason, null, 'CGPA below 2.00 needs no extra hint');
+      eq(E.ectsLimits({ cgpa: null, semestersCompleted: 4 }).reason, 'noCgpa', 'no CGPA -> hint to enter it');
+      eq(E.ectsLimits({ cgpa: null, semestersCompleted: 1 }).reason, 'noCgpa', 'early semesters without CGPA -> hint to enter it');
+      ok(!('newMax' in E.ectsLimits({ cgpa: 1.5, semestersCompleted: 4 })), 'there is no new-course sub-limit any more');
+      eq(E.ectsSummary(['MATH2263', 'ME3220'], sample(), DATA), { total: 12 }, 'ECTS summary adds up the selected courses');
 
       // ------------------------------------------------------------------
       group('Overlap detection');
@@ -235,13 +242,18 @@
       eq([run(['ME3220'], grad).min.state, run(['ME3220'], grad).min.exceptionUsed], ['pass', true], 'graduating student: minimum does not apply');
       eq(run(['ME3220', 'ME4610'], sample(), false).overlap.state, 'fail', 'an infeasible selection fails the overlap check');
       eq(run(['EEE3718'], sample()).prereq.state, 'fail', 'a course with a missing prerequisite fails the prerequisite check');
-      const prob = sample();
-      prob.cgpa = 1.8;
-      const p1 = run(['MATH2263', 'ME3220', 'ME3320', 'ME3420', 'ENGR3450', 'UFND7010'], prob);
-      eq([p1.ects.state, p1.ects.overNew, p1.ects.overTotal, p1.ects.sum.newEcts], ['fail', true, false, 21], 'probation: 21 ECTS of new courses breaks the 20 ECTS cap while the total (28) is fine');
-      eq(run(['MATH2263', 'ME3220', 'ME3320', 'ME3420', 'ENGR3450'], prob).ects.state, 'pass', 'probation: 7 repeat + 20 new = 27 ECTS passes');
+      const low = sample();
+      low.cgpa = 1.8;
+      eq(run(['MATH2263', 'ME3220', 'ME3320', 'ME3420', 'ENGR3450', 'UFND7010'], low).ects.state, 'pass', 'CGPA 1.80: 28 ECTS is within the 32 ECTS limit');
+      eq(run(['MATH2263', 'ME3220', 'ME3320', 'ME3420', 'ENGR3450'], low).ects.limits.max, 32, 'CGPA 1.80: limit is 32');
+      const low2 = run(['MATH2263', 'ME3220', 'ME3320', 'ME3420', 'ENGR3450', 'UFND7010', 'ESE4212'], low);
+      eq([low2.ects.sum.total, low2.ects.state, low2.ects.overTotal], [34, 'fail', true], 'CGPA 1.80: 34 ECTS breaks the 32 ECTS limit while 40 would have allowed it');
+      eq(run(['MATH2263', 'ME3220', 'ME3320', 'ME3420', 'ENGR3450', 'UFND7010', 'ESE4212'], sample()).ects.state, 'pass', 'CGPA 2.41: the same 34 ECTS is fine (limit 40)');
+      const noCgpa = sample();
+      noCgpa.cgpa = null;
+      eq(run(['ME3220'], noCgpa).ects.state, 'warn', 'no CGPA entered: ECTS check is a note, limit 32');
       const many = run(['MATH2263', 'ME3220', 'ME3320', 'ME3420', 'ENGR3450', 'ESE4212', 'ENGR4451', 'UFND7010', 'ME4830'], sample());
-      eq([many.ects.sum.total, many.ects.state], [44, 'fail'], 'successful student: 44 ECTS breaks the 40 ECTS limit');
+      eq([many.ects.sum.total, many.ects.state], [44, 'fail'], 'CGPA 2.41: 44 ECTS breaks the 40 ECTS limit');
       const sofl = emptyProfile();
       eq(run(['SOFL1101', 'MATH1131'], sofl).overlap.state, 'warn', 'a course without loaded sections turns the overlap check into a note, not a pass');
     } catch (err) {
