@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Kayıt Pilotu — engine tests</title>
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; }
+    h1 { font-size: 1.3rem; }
+    h2 { font-size: 1rem; margin: 18px 0 4px; }
+    ul { list-style: none; padding: 0; margin: 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+    .pass::before { content: "PASS  "; font-weight: 700; color: #1d6b45; }
+    .fail::before { content: "FAIL  "; font-weight: 700; color: #a3282d; }
+    .fail { font-weight: 700; }
+    #summary { font: 700 1.1rem ui-monospace, Menlo, Consolas, monospace; margin-top: 20px; padding: 10px 12px; border: 2px solid currentColor; border-radius: 8px; }
+    @media (prefers-color-scheme: dark) { .pass::before { color: #7fd3a4; } .fail::before { color: #f29a9a; } }
+  </style>
+</head>
+<body>
+  <h1>Kayıt Pilotu — engine and data tests</h1>
+  <p>Runs in the browser against <code>js/engine.js</code> and <code>js/data.js</code>. <a href="index.html">Back to the app</a></p>
+  <div id="out"></div>
+  <p id="summary">Running…</p>
+
+  <script type="module">
+    import * as E from './js/engine.js';
+    import { DATA, SEMESTERS, SEMESTER_ECTS, SECTIONS, COURSE_MAP, PREREQS, ELECTIVES, SAMPLE, RULES } from './js/data.js';
+
+    const results = [];
+    let section = '';
+    const group = (name) => { section = name; };
+    const ok = (cond, name, extra = '') => results.push({ section, name: name + (cond || !extra ? '' : '  -> ' + extra), pass: !!cond });
+    const eq = (a, b, name) => ok(JSON.stringify(a) === JSON.stringify(b), name, `got ${JSON.stringify(a)}, expected ${JSON.stringify(b)}`);
+
+    const sec = (code, no) => SECTIONS.find((s) => s.course === code && s.no === no);
+    const items = (codes, pins) => E.buildItems(codes, DATA, pins);
+    const emptyProfile = () => ({ status: {}, cgpa: null, semestersCompleted: 0, graduating: false });
+    const sample = () => JSON.parse(JSON.stringify(SAMPLE.profile));
+
+    try {
+      // ------------------------------------------------------------------
+      group('Data integrity');
+      eq(SEMESTERS.map((s) => s.courses.reduce((n, c) => n + c.ects, 0)), [30, 30, 30, 30, 30, 30, 31, 29], 'semester ECTS totals are 30,30,30,30,30,30,31,29');
+      ok(SEMESTERS.every((s) => s.courses.reduce((n, c) => n + c.ects, 0) === SEMESTER_ECTS[s.n]), 'each semester total matches the heading in SOURCE_DATA.md');
+      eq(SEMESTERS.reduce((n, s) => n + s.ects, 0), 240, 'curriculum totals 240 ECTS');
+      eq(SEMESTERS.map((s) => s.courses.length), [6, 7, 8, 7, 6, 5, 7, 5], 'course count per semester');
+      eq(ELECTIVES.length, 22, 'department elective pool has 22 courses');
+      ok(SECTIONS.every((s) => COURSE_MAP[s.course]), 'every section belongs to a known course', SECTIONS.filter((s) => !COURSE_MAP[s.course]).map((s) => s.course).join(','));
+      ok(SECTIONS.every((s) => s.slots.length > 0 && s.slots.every((x) => Number.isInteger(x.d) && x.d >= 0 && x.d <= 6 && Number.isInteger(x.h) && x.h >= E.FIRST_HOUR && x.h <= E.LAST_HOUR)), 'every slot has a valid day (0-6) and hour (8-21)');
+      ok(SECTIONS.every((s) => new Set(s.slots.map((x) => x.d * 100 + x.h)).size === s.slots.length), 'no section lists the same slot twice');
+      ok(SECTIONS.every((s) => s.cap > 0 && s.room.length > 0), 'every section has a room and a room capacity');
+      eq(new Set(SECTIONS.map((s) => s.course + '/' + s.no)).size, SECTIONS.length, 'section numbers are unique per course');
+      eq(SECTIONS.length, 109, 'section count matches the source (109 section lines)');
+      eq(DATA.sectionsByCourse.PHYS1121.length, 17, 'PHYS1121 has 17 sections');
+      eq(DATA.sectionsByCourse.MATH1131.length, 8, 'MATH1131 has 8 sections');
+      ok(Object.keys(PREREQS).every((c) => COURSE_MAP[c]), 'every course with a prerequisite exists');
+      eq(Object.keys(PREREQS).length, 16, '16 courses have prerequisites');
+      ok(sec('TURK1110', 1).online && !sec('ME3220', 1).online, 'rooms starting with X are flagged online');
+      eq(sec('ENGR2120', 3).room, 'T(-2 B14)', 'room names containing brackets are parsed');
+      ok(COURSE_MAP.SOFL1101.sectionsNotLoaded && !DATA.sectionsByCourse.SOFL1101, 'SOFL1101 is flagged "sections not loaded" and has no invented sections');
+      ok(COURSE_MAP.ME4830.noTimetable && E.isOffered(COURSE_MAP.ME4830, DATA), 'ME4830 (internship) is offered without timetable slots');
+      eq(COURSE_MAP.ESE4240.name, null, 'ESE4240 has no invented name');
+      ok(RULES.every((r) => r.art && r.en && r.tr), 'every rule has an article number and both languages');
+
+      // ------------------------------------------------------------------
+      group('Prerequisites (OR groups joined by AND)');
+      const pre = (code, passed) => E.evalPrereq(code, new Set(passed), PREREQS);
+      ok(!pre('ME3510', []).ok, 'ME3510 blocked with nothing passed');
+      eq(pre('ME3510', []).missing.length, 2, 'ME3510 with nothing passed reports both missing groups');
+      ok(!pre('ME3510', ['ME2210']).ok, 'ME3510 blocked with only ME2210 (MATH2263 missing)');
+      eq(pre('ME3510', ['ME2210']).missing, [['MATH2263']], 'ME3510 with ME2210 reports exactly MATH2263 as missing');
+      ok(!pre('ME3510', ['MATH2263']).ok, 'ME3510 blocked with only MATH2263 (mechanics missing)');
+      eq(pre('ME3510', ['MATH2263']).missing, [['ME1222', 'ME2211', 'CE2203', 'ME2210']], 'the missing mechanics group lists all alternatives');
+      ok(pre('ME3510', ['ME2210', 'MATH2263']).ok, 'ME3510 open with ME2210 and MATH2263');
+      ok(pre('ME3510', ['CE2203', 'MATH2263']).ok, 'ME3510 open with old equivalent CE2203 and MATH2263');
+      ok(pre('MATH1132', ['MATH131']).ok && !pre('MATH1132', []).ok, 'MATH1132 accepts old code MATH131, blocked without');
+      ok(pre('ME4230', ['MATH2263', 'ME3220']).ok && !pre('ME4230', ['ME3220']).ok, 'ME4230 needs MATH2263 and (ME2222 or ME3220)');
+      ok(pre('ME4410', ['CHEM1130', 'ME2220']).ok && !pre('ME4410', ['CHEM1130']).ok, 'ME4410 needs chemistry and mechanics of materials');
+      ok(pre('ENGR3450', []).ok, 'a course without prerequisites is always open');
+
+      // ------------------------------------------------------------------
+      group('CGPA bands and ECTS limits');
+      eq(E.cgpaBand(2.0, 4), 'successful', 'CGPA 2.00 is successful');
+      eq(E.cgpaBand(3.4, 4), 'successful', 'CGPA 3.40 is successful');
+      eq(E.cgpaBand(1.99, 4), 'probation', 'CGPA 1.99 is probation');
+      eq(E.cgpaBand(1.75, 4), 'probation', 'CGPA 1.75 is probation');
+      eq(E.cgpaBand(1.74, 4), 'unsuccessful', 'CGPA 1.74 is unsuccessful');
+      eq(E.cgpaBand(1.2, 1), 'exempt', 'status rules do not apply before the end of the 2nd semester');
+      eq(E.cgpaBand(null, 4), 'unknown', 'missing CGPA is reported as unknown');
+      const lim = (cgpa, rep) => { const l = E.ectsLimits({ cgpa, semestersCompleted: 4 }, rep); return [l.max, l.newMax, l.article]; };
+      eq(lim(2.5, false), [40, null, '23'], 'successful: 40 ECTS, Art. 23');
+      eq(lim(1.8, true), [32, 20, '24(1), 24(4)'], 'probation: 32 ECTS of which 20 new, Art. 24(1),(4)');
+      eq(lim(1.5, false), [32, 20, '24(2), 24(5)'], 'unsuccessful with nothing to repeat: 20 ECTS new');
+      eq(lim(1.5, true), [32, null, '24(2), 24(5)'], 'unsuccessful with repeats: 32 ECTS total');
+      ok(E.ectsLimits({ cgpa: 1.5, semestersCompleted: 4 }, true).newMaxUnclear, 'unsuccessful with repeats flags the unclear new-course cap');
+      eq(E.ectsLimits({ cgpa: 1.0, semestersCompleted: 1 }, false).max, 40, 'first-year student: general 40 ECTS maximum');
+      eq(E.ectsSummary(['MATH2263', 'ME3220'], sample(), DATA), { total: 12, repeatEcts: 7, newEcts: 5 }, 'ECTS summary separates repeated and new courses');
+
+      // ------------------------------------------------------------------
+      group('Overlap detection');
+      ok(E.sectionsOverlap(sec('ME3220', 1), sec('ME4610', 1)), 'ME3220(1) and ME4610(1) overlap');
+      eq(E.sharedSlots(sec('ME3220', 1).slots, sec('ME4610', 1).slots), [{ d: 1, h: 8 }, { d: 1, h: 9 }], 'they share Tue 08 and Tue 09');
+      ok(E.sectionsOverlap(sec('ME3220', 1), sec('ESE4112', 1)), 'ME3220(1) and ESE4112(1) overlap');
+      ok(!E.sectionsOverlap(sec('ME3220', 1), sec('ME3320', 1)), 'ME3220(1) and ME3320(1) do not overlap');
+      ok(!E.sectionsOverlap(sec('ME3320', 1), sec('ME3420', 1)), 'back-to-back lessons (Fri 08-09 then 10-11) do not overlap');
+      ok(E.sectionsOverlap(sec('TURK1110', 2), sec('HIST1110', 2)), 'online lessons at the same time still conflict (TURK1110(2) / HIST1110(2))');
+      ok(E.masksOverlap(E.maskOf(sec('HIST1210', 1).slots), E.maskOf(sec('ISG9110', 1).slots)), 'HIST1210(1) and ISG9110(1) conflict (Wed 18-19, both online)');
+      eq(E.mergeSlots(sec('ME3220', 1).slots), [{ d: 1, from: 8, to: 9 }, { d: 4, from: 12, to: 13 }], 'consecutive slots merge into ranges');
+      eq([E.slotStart(8), E.slotEnd(9)], ['08:40', '10:30'], 'a lesson starts at hh:40 and ends at (hh+1):30');
+
+      // ------------------------------------------------------------------
+      group('Combination enumeration');
+      eq(E.optionsFor('ENGR3450', DATA).length, 3, 'ENGR3450: sections 3 and 4 have the same times and merge into one option');
+      eq(E.optionsFor('ME4910', DATA).length, 4, 'ME4910: 8 sections collapse to 4 distinct timetables');
+      eq(E.enumeratePlans(items(['ME3220', 'ME3320', 'ME3420'])).total, 2, 'ME3220 + ME3320 + ME3420 has exactly 2 plans');
+      const sampleItems = items(SAMPLE.selected);
+      const sampleRes = E.enumeratePlans(sampleItems);
+      eq(sampleRes.total, 4, 'sample selection (5 courses) has exactly 4 plans');
+      eq(E.enumeratePlans(items(SAMPLE.selected, { ENGR3450: 4 })).total, 2, 'pinning ENGR3450 to section 4 leaves 2 plans');
+      eq(E.enumeratePlans(items(['MATH2263', 'ME3420'])).total, 2, 'MATH2263 + ME3420: sections 2 and 4 of MATH2263 are excluded');
+
+      const conflictFree = (its, plan) => {
+        const seen = new Set();
+        for (let i = 0; i < its.length; i++) for (const s of its[i].options[plan[i]].slots) {
+          const k = s.d * 100 + s.h;
+          if (seen.has(k)) return false;
+          seen.add(k);
+        }
+        return true;
+      };
+      ok(sampleRes.plans.every((p) => conflictFree(sampleItems, p)), 'every returned plan is really conflict-free');
+
+      // brute force over raw sections to cross-check the backtracking
+      const brute = (codes) => {
+        const lists = codes.map((c) => E.optionsFor(c, DATA));
+        let n = 0;
+        const go = (i, chosen) => {
+          if (i === lists.length) { n++; return; }
+          for (const o of lists[i]) if (chosen.every((p) => !E.masksOverlap(p.mask, o.mask))) go(i + 1, [...chosen, o]);
+        };
+        go(0, []);
+        return n;
+      };
+      const y1 = ['PHYS1121', 'MATH1131', 'ENGR1115', 'MATH1100'];
+      const y1Items = items(y1);
+      const t0 = Date.now();
+      const y1Res = E.enumeratePlans(y1Items);
+      const ms = Date.now() - t0;
+      eq(y1Res.total, brute(y1), 'PHYS1121 (17) x MATH1131 (8) x ENGR1115 x MATH1100: backtracking count equals brute force');
+      ok(y1Res.total > 0 && y1Res.plans.every((p) => conflictFree(y1Items, p)), `all ${y1Res.total} first-year plans are conflict-free`);
+      ok(ms < 1500, `first-year enumeration is fast (${ms} ms)`);
+      const full = items(['PHYS1121', 'MATH1131', 'ENGR1115', 'MATH1100', 'UMFD1020', 'TURK1110', 'HIST1110']);
+      const t1 = Date.now();
+      const fullRes = E.searchPlans(full, E.DEFAULT_PREFS, { keep: 200 });
+      const ms2 = Date.now() - t1;
+      ok(fullRes.total > 0 && fullRes.best.length <= 200, `7 first-year courses: ${fullRes.total} plans counted, best 200 kept`);
+      ok(ms2 < 4000, `ranked search over 7 courses stays fast (${ms2} ms)`);
+      eq(fullRes.total, E.countPlans(full), 'searchPlans and countPlans agree on the total');
+
+      // ------------------------------------------------------------------
+      group('Ranking');
+      const ranked = E.rankPlans(y1Items, y1Res.plans, { fewDays: false, lateStart: true, fewGaps: false, freeWeekend: false });
+      ok(ranked[0].metrics.early === Math.min(...ranked.map((r) => r.metrics.early)), '"no lessons before 10:40" puts a plan with the fewest early lessons first');
+      const byDays = E.rankPlans(y1Items, y1Res.plans, { fewDays: true, lateStart: false, fewGaps: false, freeWeekend: false });
+      ok(byDays[0].metrics.campusDays === Math.min(...byDays.map((r) => r.metrics.campusDays)), '"fewest days on campus" puts a plan with the fewest campus days first');
+      const byGaps = E.rankPlans(y1Items, y1Res.plans, { fewDays: false, lateStart: false, fewGaps: true, freeWeekend: false });
+      ok(byGaps[0].metrics.gaps === Math.min(...byGaps.map((r) => r.metrics.gaps)), '"fewest idle gaps" puts a plan with the fewest idle hours first');
+      const top = E.searchPlans(y1Items, { fewDays: true, lateStart: false, fewGaps: false, freeWeekend: false }, { keep: 5 });
+      eq(top.best[0].cost, byDays[0].cost, 'searchPlans (top-k) finds the same best cost as a full sort');
+      const m = E.planMetrics(items(['ME3220']), [0]);
+      eq([m.days, m.campusDays, m.early, m.gaps, m.weekendDays, m.first, m.last], [2, 2, 2, 0, 0, 8, 13], 'metrics of ME3220(1): 2 days, 2 early lessons, no gaps');
+      eq(E.planMetrics(items(['TURK1110']), [0]).campusDays, 0, 'online-only days are not counted as days on campus');
+      const w = E.searchPlans(items(['ME4910']), { fewDays: false, lateStart: false, fewGaps: false, freeWeekend: true });
+      eq(w.best[0].metrics.weekendDays, 1, 'ME4910 always uses one weekend day (reported, not hidden)');
+
+      // ------------------------------------------------------------------
+      group('No-solution explanation');
+      const a = items(['ME3220', 'ME4610']);
+      eq(E.enumeratePlans(a).total, 0, 'ME3220 + ME4610 has no conflict-free plan');
+      const exA = E.explainNoSolution(a, { keep: { ME3220: 2, ME4610: 1 } });
+      eq(exA.pairs.map((p) => [p.a, p.b]), [['ME3220', 'ME4610']], 'the clashing pair ME3220 / ME4610 is named');
+      eq(exA.pairs[0].shared, [{ d: 1, h: 8 }, { d: 1, h: 9 }], 'the shared slots are Tue 08 and Tue 09');
+      eq(exA.recommended, 'ME4610', 'suggests dropping the elective ME4610 rather than compulsory ME3220');
+      eq(exA.plansAfter, 1, 'reports how many plans remain after the drop');
+      const b = items(['ME3220', 'ESE4112', 'ME3320']);
+      const exB = E.explainNoSolution(b, { keep: { ME3220: 2, ESE4112: 1, ME3320: 2 } });
+      eq(exB.pairs.map((p) => [p.a, p.b]), [['ME3220', 'ESE4112']], 'ME3220 / ESE4112 named, uninvolved ME3320 is not');
+      eq(exB.singleDrops, ['ESE4112', 'ME3220'], 'only the two clashing courses are offered as drops, elective first');
+      const c3 = items(['ME3220', 'ME4610', 'ESE4112']);
+      const exC = E.explainNoSolution(c3, {});
+      eq(exC.pairs.length, 3, 'ME3220 / ME4610 / ESE4112: all three pairs clash (Tue 08-09)');
+      eq(exC.singleDrops, [], 'no single drop is enough for three mutually clashing courses');
+      eq(exC.pairDrops.length, 3, 'pairs of drops are proposed instead');
+      const pinned = items(['MATH2263', 'ME3420'], { MATH2263: 2 });
+      eq(E.enumeratePlans(pinned).total, 0, 'pinning MATH2263(2) next to ME3420 leaves no plan');
+      ok(E.explainNoSolution(pinned, { unpinned: items(['MATH2263', 'ME3420']) }).pinsBlame, 'the explanation blames the pinned section');
+      const multi = items(['HIST1210', 'ISG9110']);
+      ok(E.explainNoSolution(multi).pairs.length === 1, 'two single-section online courses at the same time are reported as a clash');
+
+      // ------------------------------------------------------------------
+      group('Classification for this term');
+      const cls = E.classify(sample(), DATA);
+      eq(cls.MATH2263.cat, 'repeat', 'sample: failed compulsory MATH2263 is "must repeat first"');
+      eq(cls.EEE3718.cat, 'blocked', 'sample: EEE3718 is blocked');
+      eq(cls.EEE3718.missing, [['MATH2263', 'MATH263']], 'sample: EEE3718 names MATH2263 as the missing prerequisite');
+      eq(cls.ME3220.cat, 'eligible', 'sample: ME3220 is eligible');
+      eq(cls.ME2220.cat, 'passed', 'sample: ME2220 is already passed');
+      eq(cls.ME3410.cat, 'notOffered', 'sample: ME3410 is not offered this term');
+      eq(cls.ME4330.cat, 'blocked', 'sample: elective ME4330 is blocked (needs ME3330)');
+      eq(cls.ME4830.cat, 'eligible', 'sample: internship ME4830 is eligible (ISG9110 passed)');
+      eq(cls.ELECTMEA1.cat, 'slot', 'elective slots are reported as slots, not as courses');
+      const cls0 = E.classify(emptyProfile(), DATA);
+      eq(cls0.SOFL1101.cat, 'noData', 'empty profile: SOFL1101 is "sections not loaded"');
+      eq(cls0.SOFL1102.cat, 'blocked', 'empty profile: SOFL1102 is blocked by SOFL1101');
+      eq(cls0.MATH1131.cat, 'eligible', 'empty profile: MATH1131 is eligible');
+      eq(cls0.MATH1132.cat, 'blocked', 'empty profile: MATH1132 is blocked by MATH1131');
+      const failedElective = sample();
+      failedElective.status.ME4610 = 'failed';
+      eq(E.classify(failedElective, DATA).ME4610.cat, 'eligible', 'a failed elective is not forced into "must repeat"');
+      ok(DATA.courses.every((c) => cls[c.code] && cls[c.code].cat), 'every course gets a category');
+
+      // ------------------------------------------------------------------
+      group('Pre-flight check');
+      const run = (selected, profile, feasible = true) => Object.fromEntries(E.preflight({ selected, profile, data: DATA, feasible }).map((c) => [c.id, c]));
+      const good = run(SAMPLE.selected, sample());
+      eq(Object.values(good).map((c) => c.state), ['pass', 'pass', 'pass', 'pass', 'pass'], 'sample plan passes all five checks');
+      eq(Object.values(good).map((c) => c.article), ['29(3)', '28(c)', '23', '26', '22(1)'], 'each check cites its article');
+      const noRepeat = run(['ME3220', 'ME3320', 'ME3420', 'ENGR3450'], sample());
+      eq(noRepeat.repeat.state, 'fail', 'leaving out failed MATH2263 fails the repeat-first check');
+      eq(noRepeat.repeat.missingRepeats, ['MATH2263'], 'and names MATH2263');
+      eq(run(['ME3220'], sample()).min.state, 'fail', '5 ECTS fails the 20 ECTS minimum');
+      const grad = sample();
+      grad.graduating = true;
+      eq([run(['ME3220'], grad).min.state, run(['ME3220'], grad).min.exceptionUsed], ['pass', true], 'graduating student: minimum does not apply');
+      eq(run(['ME3220', 'ME4610'], sample(), false).overlap.state, 'fail', 'an infeasible selection fails the overlap check');
+      eq(run(['EEE3718'], sample()).prereq.state, 'fail', 'a course with a missing prerequisite fails the prerequisite check');
+      const prob = sample();
+      prob.cgpa = 1.8;
+      const p1 = run(['MATH2263', 'ME3220', 'ME3320', 'ME3420', 'ENGR3450', 'UFND7010'], prob);
+      eq([p1.ects.state, p1.ects.overNew, p1.ects.overTotal, p1.ects.sum.newEcts], ['fail', true, false, 21], 'probation: 21 ECTS of new courses breaks the 20 ECTS cap while the total (28) is fine');
+      eq(run(['MATH2263', 'ME3220', 'ME3320', 'ME3420', 'ENGR3450'], prob).ects.state, 'pass', 'probation: 7 repeat + 20 new = 27 ECTS passes');
+      const many = run(['MATH2263', 'ME3220', 'ME3320', 'ME3420', 'ENGR3450', 'ESE4212', 'ENGR4451', 'UFND7010', 'ME4830'], sample());
+      eq([many.ects.sum.total, many.ects.state], [44, 'fail'], 'successful student: 44 ECTS breaks the 40 ECTS limit');
+      const sofl = emptyProfile();
+      eq(run(['SOFL1101', 'MATH1131'], sofl).overlap.state, 'warn', 'a course without loaded sections turns the overlap check into a note, not a pass');
+    } catch (err) {
+      results.push({ section: 'Runtime', name: 'tests threw: ' + (err && err.stack ? err.stack : err), pass: false });
+    }
+
+    const failed = results.filter((r) => !r.pass).length;
+    const summary = failed ? `TESTS FAILED: ${failed}` : 'ALL TESTS PASSED';
+    if (typeof document !== 'undefined') {
+      const out = document.getElementById('out');
+      let cur = null;
+      let list = null;
+      for (const r of results) {
+        if (r.section !== cur) {
+          cur = r.section;
+          const h = document.createElement('h2');
+          h.textContent = cur;
+          out.appendChild(h);
+          list = document.createElement('ul');
+          out.appendChild(list);
+        }
+        const li = document.createElement('li');
+        li.className = r.pass ? 'pass' : 'fail';
+        li.textContent = r.name;
+        list.appendChild(li);
+      }
+      document.getElementById('summary').textContent = `${summary}  (${results.length - failed} of ${results.length} assertions passed)`;
+      document.title = summary;
+    } else {
+      for (const r of results) print((r.pass ? 'PASS  ' : 'FAIL  ') + '[' + r.section + '] ' + r.name);
+      print(summary);
+    }
+  </script>
+</body>
+</html>
