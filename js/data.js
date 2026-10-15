@@ -438,7 +438,7 @@ export const SAMPLE = buildSample();
 // FICTIONAL display data for the demo student and advisor shown in the interface.
 // Placeholders only: not real people, not a real student number.
 export const DEMO_STUDENT = {
-  name: 'Deniz Örnek',
+  name: 'Berkay Örnek',
   number: 'DEMO-0001',
   advisor: 'Dr. Örnek Danışman',
 };
