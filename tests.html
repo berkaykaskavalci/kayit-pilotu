@@ -25,7 +25,8 @@
 
   <script type="module">
     import * as E from './js/engine.js';
-    import { DATA, SEMESTERS, SEMESTER_ECTS, SECTIONS, COURSE_MAP, PREREQS, ELECTIVES, SAMPLE, RULES } from './js/data.js';
+    import { DATA, SEMESTERS, SEMESTER_ECTS, SECTIONS, COURSE_MAP, PREREQS, ELECTIVES, SAMPLE, RULES, DEMO_STUDENT } from './js/data.js';
+    import { STR } from './js/i18n.js';
 
     const results = [];
     let section = '';
@@ -256,6 +257,77 @@
       eq([many.ects.sum.total, many.ects.state], [44, 'fail'], 'CGPA 2.41: 44 ECTS breaks the 40 ECTS limit');
       const sofl = emptyProfile();
       eq(run(['SOFL1101', 'MATH1131'], sofl).overlap.state, 'warn', 'a course without loaded sections turns the overlap check into a note, not a pass');
+
+      // ------------------------------------------------------------------
+      group('Registration helpers');
+      eq(E.currentSemester(sample()), 5, 'sample student (4 semesters done) registers for semester 5');
+      eq(E.currentSemester(emptyProfile()), 1, 'a new student registers for semester 1');
+      eq(E.currentSemester({ semestersCompleted: 11 }), 8, 'past 8 semesters the curriculum ends at semester 8');
+      const rp = E.registrationPlan(sample(), DATA);
+      eq(rp.semester, 5, 'registration plan is for semester 5');
+      eq(rp.locked, ['MATH2263'], 'failed MATH2263 is the only locked retake');
+      eq(rp.auto, ['MATH2263', 'ENGR3450', 'ME3220', 'ME3320', 'ME3420'], 'retake first, then the offered compulsory courses of semester 5');
+      eq(rp.rows.find((r) => r.code === 'MATH2263').role, 'retake', 'MATH2263 row is marked as a retake (alttan)');
+      const eeeRow = rp.rows.find((r) => r.code === 'EEE3718');
+      eq([eeeRow.state, eeeRow.missing], ['blocked', [['MATH2263', 'MATH263']]], 'EEE3718 is listed as blocked and names MATH2263');
+      ok(!rp.rows.some((r) => r.code === 'UNVELECTME1'), 'elective slots are not listed as compulsory rows');
+      ok(!rp.rows.some((r) => r.code === 'ME2220'), 'passed courses are not listed');
+      const optCodes = rp.optional.map((o) => o.code);
+      ok(['ENGR4451', 'ESE4112', 'ME4610'].every((c) => rp.optional.find((o) => o.code === c && o.group === 'elective' && o.cat === 'eligible')), 'offered department electives can be added');
+      eq(rp.optional.find((o) => o.code === 'ME4330').cat, 'blocked', 'blocked elective ME4330 is listed as blocked, not addable');
+      ok(!optCodes.includes('ME4110'), 'electives not offered this term are not listed');
+      ok(rp.optional.some((o) => o.code === 'UFND7010' && o.group === 'other'), 'earlier course not taken yet (UFND7010) can be added');
+      ok(rp.optional.some((o) => o.code === 'ME4830' && o.group === 'other'), 'internship ME4830 can be added');
+      ok(!optCodes.some((c) => rp.auto.includes(c)), 'automatic courses are not offered again as optional');
+      const notOff = sample();
+      notOff.status.ME3410 = 'failed';
+      eq(E.registrationPlan(notOff, DATA).rows.find((r) => r.code === 'ME3410'), { code: 'ME3410', role: 'retake', state: 'notOffered', missing: [] }, 'a failed course that is not offered is listed as "not offered", not added');
+      const newbie = E.registrationPlan(emptyProfile(), DATA);
+      eq(newbie.auto, ['ENGR1115', 'MATH1100', 'MATH1131', 'PHYS1121', 'SOFL1101', 'UMFD1020'], 'a new student gets all semester-1 courses');
+
+      eq(E.composeSelection(rp), rp.auto, 'by default the selection is the automatic list');
+      eq(E.composeSelection(rp, { dropped: ['MATH2263', 'ENGR3450'] }), ['MATH2263', 'ME3220', 'ME3320', 'ME3420'], 'a locked retake cannot be dropped; other compulsory courses can');
+      eq(E.composeSelection(rp, { added: ['ENGR4451', 'ME4330', 'ME4110', 'ENGR4451'] }), [...rp.auto, 'ENGR4451'], 'only addable courses are added, once');
+      eq(E.ectsSummary(E.composeSelection(rp), sample(), DATA).total, 27, 'sample registration starts with 27 ECTS');
+
+      ok(E.needsSection('ME3220', DATA) && !E.needsSection('ME4830', DATA) && !E.needsSection('SOFL1101', DATA), 'needsSection: timed courses only');
+      eq(E.resolveSections(rp.auto, {}, DATA), { ME3220: 1, ME3420: 1 }, 'single-section courses are chosen automatically');
+      eq(E.resolveSections(rp.auto, { MATH2263: 3, ENGR3450: 4 }, DATA), { MATH2263: 3, ENGR3450: 4, ME3220: 1, ME3420: 1 }, 'picked sections are kept');
+      eq(E.resolveSections(['MATH2263'], { MATH2263: 9 }, DATA), {}, 'a section number that does not exist is ignored');
+      eq(E.resolveSections(['ME4830', 'SOFL1101'], {}, DATA), {}, 'courses without timed sections need no section');
+
+      const chosen = E.chosenSections({ ME3220: 1, ME3420: 1 }, DATA);
+      eq(chosen.map((c) => [c.code, c.no, c.slots.length]), [['ME3220', 1, 4], ['ME3420', 1, 4]], 'chosenSections returns the slots of each chosen section');
+      const mc = E.sectionConflicts('MATH2263', chosen, DATA);
+      eq(mc.map((x) => [x.option.nos, x.clashes.map((c) => c.code)]), [[[1], []], [[2], ['ME3420']], [[3], []], [[4], ['ME3420']]], 'MATH2263: sections 2 and 4 clash with ME3420, 1 and 3 are free');
+      eq(mc[1].clashes[0].shared, [{ d: 2, h: 8 }, { d: 2, h: 9 }], 'the clash is named with its slots (Wed 08:40 and 09:40)');
+      const ec = E.sectionConflicts('ESE4112', chosen, DATA);
+      eq([ec[0].clashes[0].code, ec[0].clashes[0].shared[0]], ['ME3220', { d: 1, h: 8 }], 'ESE4112 clashes with ME3220 on Tuesday 08:40');
+      eq(E.sectionConflicts('ME3220', chosen, DATA)[0].clashes, [], 'a course is never reported as clashing with itself');
+      eq(E.chosenClashes(chosen), [], 'ME3220(1) and ME3420(1) do not clash');
+      eq(E.chosenClashes(E.chosenSections({ ME3220: 1, ME4610: 1 }, DATA)).map((p) => [p.a, p.b, p.shared.length]), [['ME3220', 'ME4610', 2]], 'chosenClashes finds ME3220(1) / ME4610(1)');
+
+      eq(['MATH2263', 'ME3220', 'ENGR4451', 'ME4830', 'UFND7010'].map((c) => E.courseRole(c, sample(), DATA)), ['retake', 'compulsory', 'elective', 'internship', 'compulsory'], 'course roles: retake, compulsory, elective, internship');
+
+      // Whole flow on the sample student: auto list -> best plan -> all checks pass.
+      const flowItems = items(E.composeSelection(rp));
+      const flow = E.searchPlans(flowItems, E.DEFAULT_PREFS);
+      eq(flow.total, 4, 'automatic list of the sample student has exactly 4 conflict-free timetables');
+      const picks = {};
+      flowItems.forEach((it, i) => { const o = it.options[flow.best[0].plan[i]]; if (!o.untimed) picks[it.code] = o.nos[0]; });
+      const resolved = E.resolveSections(E.composeSelection(rp), picks, DATA);
+      eq(Object.keys(resolved).length, 5, 'using the best plan gives a section for every course');
+      eq(E.chosenClashes(E.chosenSections(resolved, DATA)), [], 'the best plan has no clash');
+      const flowChecks = E.preflight({ selected: E.composeSelection(rp), profile: sample(), data: DATA, feasible: E.isFeasible(items(E.composeSelection(rp), resolved)) });
+      eq(flowChecks.map((c) => c.state), ['pass', 'pass', 'pass', 'pass', 'pass'], 'the sample registration passes all five checks');
+
+      // ------------------------------------------------------------------
+      group('Interface texts and demo data');
+      const enKeys = Object.keys(STR.en).sort();
+      const trKeys = Object.keys(STR.tr).sort();
+      eq(enKeys.filter((k) => !STR.tr[k]), [], 'every English key has a Turkish text');
+      eq(trKeys.filter((k) => !STR.en[k]), [], 'every Turkish key has an English text');
+      ok(DEMO_STUDENT && /Örnek/.test(DEMO_STUDENT.name) && /Örnek/.test(DEMO_STUDENT.advisor), 'demo student and advisor are visibly fictional placeholders');
     } catch (err) {
       results.push({ section: 'Runtime', name: 'tests threw: ' + (err && err.stack ? err.stack : err), pass: false });
     }

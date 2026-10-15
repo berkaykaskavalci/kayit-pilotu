@@ -2,6 +2,9 @@
 
 An unofficial pre-registration planner, built for ENGR 4451 (Generative AI for engineering applications).
 
+**Live site:** https://berkaykaskavalci.github.io/kayit-pilotu/  
+**Demo video (2:16):** [demo/kayit-pilotu-demo.mp4](demo/kayit-pilotu-demo.mp4)
+
 ## The problem
 
 The university's student information system (OBS) tells you about a timetable conflict, a missing prerequisite or
@@ -9,23 +12,41 @@ an exceeded credit limit only *after* you have clicked through the registration,
 between sections. Kayıt Pilotu lets a student plan *before* registration opens, using the real 2026-2027 Fall
 timetable of the Mechanical Engineering programme.
 
-## The four features
+## The flow
 
-1. **My status** – mark every curriculum course as passed, failed or not taken (per semester, with a
-   "mark whole semester passed" shortcut) and enter your CGPA. Stored only in your browser (localStorage).
-   A fictional sample student can be loaded with one click.
-2. **What can I take this semester?** – every course is sorted into: must repeat first, eligible, blocked by a
-   prerequisite (showing exactly which one is missing), not offered this term, already passed. Your ECTS limit
-   (up to 40 ECTS with a CGPA of 2.00 or above, otherwise up to 32 ECTS) is shown with its article number, with a
-   live counter.
-3. **Schedule builder** – tick the courses you want; the app enumerates all section combinations without a time
-   overlap, ranks them by your preferences (fewest days on campus, no lessons before 10:40, fewest idle gaps,
-   free weekend) and shows them on a weekly grid. You can page through the alternatives and pin a section.
-   If no combination exists, it names the courses that always clash and suggests which one to drop.
-4. **Pre-flight check + export** – a pass/fail checklist (no overlap, prerequisites, ECTS limit, repeat-first rule,
-   20 ECTS minimum), each citing its article, then a "copy for OBS / send to advisor" text and a print view.
+The app is laid out like a student information system (sidebar, term chip, EN/TR toggle), but it is our own
+neutral design ("KP" mark), with a fictional demo student and no login.
 
-The interface is in Turkish by default, with an EN/TR toggle (the stored choice wins). Course names are shown in Turkish, as in the source.
+1. **Ana Sayfa (home)** – student card (fictional), CGPA with the resulting ECTS limit (40 with a CGPA of 2.00 or
+   above, otherwise 32) and its article, passed ECTS out of 240, registration status, advisor (placeholder) and a
+   "Ders kaydına başla" button. On the first visit the fictional sample student is loaded automatically.
+2. **Ders Kayıt (registration)** – compulsory courses of the current semester and failed compulsory courses
+   (retakes, marked "Alttan", cannot be removed) are added automatically; single-section courses get their section
+   automatically. Each course shows its section count and status (selected / choose a section / prerequisite missing,
+   naming the course / not offered this term). Department electives offered this term can be added. Sections are
+   picked directly on the weekly grid: the sections of the focused course appear as dashed blocks, sections that
+   clash with an already chosen course are locked and say why ("ME 3220 ile Salı 08:40'ta çakışıyor"). The same
+   choice is available as a keyboard-friendly list under the grid.
+3. **Otomatik program önerisi** – an exact search (not AI): every section combination of the ticked courses is
+   tried, every conflict-free timetable is listed with a mini weekly grid, ranked by fewest days on campus, fewest
+   idle gaps, no lessons before 10:40 and free weekend. If none exists, the app names the courses that clash in
+   every combination and suggests which one to leave out.
+4. **Kaydı tamamla** – a registration summary (section, code, name, type, ECTS, total vs limit) with the
+   pre-flight checklist (no overlap, prerequisites, ECTS limit, retake first, 20 ECTS minimum), each citing its
+   article. "Danışman onayına gönder" only changes a status stored in the browser: nothing is sent anywhere.
+5. **Haftalık Program** – the final timetable and course list; download as PNG (drawn on a canvas), copy as text,
+   or print.
+6. **Durumum** – mark every curriculum course as passed, failed or not taken, enter CGPA, semesters completed and
+   the graduation flag. **Kurallar ve Kaynaklar** – rules, sources, data date and disclaimers.
+
+Everything is stored only in the browser (localStorage). The interface is in Turkish by default, with an EN/TR
+toggle (the stored choice wins). Course names are shown in Turkish, as in the source.
+
+### Demo mode (for screen recordings)
+
+Open `index.html?demo=1`. `window.kpDemo.caption(text)` shows a subtitle-style caption at the bottom of the
+screen (`caption(null)` hides it), `window.kpDemo.reset()` restores the sample student and clears the
+registration. Interactive elements carry stable `data-testid` attributes.
 
 ## Data sources
 
@@ -54,7 +75,7 @@ under a sub-path such as GitHub Pages.
 
 - `index.html`, `css/style.css` – page shell and styles
 - `js/data.js` – curriculum, prerequisites, sections and rules, transcribed from the source file
-- `js/engine.js` – rules and scheduling logic (pure functions, no DOM)
+- `js/engine.js` – rules, scheduling and registration logic (pure functions, no DOM)
 - `js/i18n.js` – English and Turkish interface texts
 - `js/app.js` – state, rendering and events
 - `tests.html` – browser tests for the engine and the data
@@ -68,6 +89,7 @@ under a sub-path such as GitHub Pages.
 - SOFL 1101 / SOFL 1102 sections were not captured: their ECTS can be counted, but their times are not checked.
 - The A/B group of each department elective and the university elective list are not in the data.
 - Grades are not tracked, so repeating passed courses (C-, D+, D) is not modelled.
+- The student, student number, advisor, financial status and advisor approval are fictional demo values.
 - The 32 / 40 ECTS limits (40 with a CGPA of 2.00 or above, otherwise 32; 32 also when no CGPA is entered or in the
   first two semesters) reflect current practice as reported by students, not the 2016 regulation text. Confirm them
   with your advisor. The app has no separate cap on new courses.

@@ -5,41 +5,48 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="description" content="Kayıt Pilotu: ders kaydı açılmadan önce plan yapmanı sağlayan, resmi olmayan bir ön kayıt planlayıcısı.">
-  <title>Kayıt Pilotu — Ders Kayıt Planlayıcı</title>
+  <title>Kayıt Pilotu</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <a class="skip" id="skip" href="#main" data-act="skip">İçeriğe geç</a>
 
-  <header class="top">
-    <div class="wrap top-in">
-      <div class="brand">
-        <span class="logo" aria-hidden="true">KP</span>
-        <div>
-          <h1>Kayıt Pilotu <span class="brand-sub">Ders Kayıt Planlayıcı</span></h1>
-          <p id="tagline" class="tagline">Ders kaydın açılmadan önce planını yap. Resmi olmayan bir öğrenci projesi.</p>
-        </div>
-      </div>
+  <header class="topbar">
+    <button type="button" class="icon-btn nav-toggle" id="nav-toggle" data-act="nav" aria-controls="sidebar" aria-expanded="false" aria-label="Menüyü aç" data-testid="nav-toggle">
+      <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <a class="brand" id="brand" href="#home" data-testid="brand"><span class="mark-kp" aria-hidden="true">KP</span><span class="brand-t" id="brand-t">Kayıt Pilotu</span></a>
+    <div class="top-right">
+      <span class="term-chip" id="term-chip" data-testid="term-chip">2026-2027 Güz</span>
       <div class="lang" id="langgroup" role="group" aria-label="Dil">
-        <button type="button" data-act="lang" data-lang="en" id="lang-en" aria-pressed="false" lang="en">EN</button>
-        <button type="button" data-act="lang" data-lang="tr" id="lang-tr" aria-pressed="true" lang="tr">TR</button>
+        <button type="button" data-act="lang" data-lang="tr" id="lang-tr" aria-pressed="true" lang="tr" data-testid="lang-tr">TR</button>
+        <button type="button" data-act="lang" data-lang="en" id="lang-en" aria-pressed="false" lang="en" data-testid="lang-en">EN</button>
+      </div>
+      <div class="who" id="who" data-testid="student-name">
+        <span class="avatar" id="who-av" aria-hidden="true"></span>
+        <span class="who-txt"><span class="who-name" id="who-name"></span><span class="who-sub" id="who-sub"></span></span>
       </div>
     </div>
-    <nav class="steps" id="steps" aria-label="Adımlar">
-      <div class="wrap steps-in" id="nav"></div>
-    </nav>
   </header>
 
-  <div id="ectsbar" class="ectsbar" hidden></div>
+  <div class="shell">
+    <aside class="side" id="sidebar" aria-label="Ana menü">
+      <nav id="nav"></nav>
+    </aside>
+    <div class="scrim" data-act="nav-close" aria-hidden="true"></div>
+    <div class="content">
+      <main id="main" tabindex="-1">
+        <noscript><p class="card">Bu planlayıcı JavaScript gerektirir.</p></noscript>
+      </main>
+      <footer class="foot" id="foot"></footer>
+    </div>
+  </div>
 
-  <main id="main" class="wrap" tabindex="-1">
-    <noscript><p class="card">Bu planlayıcı JavaScript gerektirir.</p></noscript>
-  </main>
+  <dialog id="dlg-suggest" class="dlg dlg-wide" aria-labelledby="sg-title" data-testid="suggest-modal"><div class="dlg-inner" id="sg-inner"></div></dialog>
+  <dialog id="dlg-summary" class="dlg" aria-labelledby="sm-title" data-testid="summary-modal"><div class="dlg-inner" id="sm-inner"></div></dialog>
 
-  <footer class="foot">
-    <div class="wrap"><p id="foot"></p></div>
-  </footer>
-
+  <div id="print-area" class="print-area" aria-hidden="true"></div>
+  <div id="demo-caption" class="demo-caption" popover="manual" data-testid="demo-caption" aria-hidden="true" aria-live="polite"></div>
   <div id="live" class="sr" aria-live="polite"></div>
 
   <script type="module" src="js/app.js"></script>
