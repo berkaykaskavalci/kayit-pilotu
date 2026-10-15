@@ -441,3 +441,142 @@ export function preflight({ selected, profile, data, feasible }) {
 
   return checks;
 }
+
+// ---------------------------------------------------------------------------
+// Registration helpers (used by the "Ders Kayıt" screen). Pure, like the rest.
+// ---------------------------------------------------------------------------
+
+/** The semester the student is about to take: completed + 1, between 1 and 8. */
+export function currentSemester(profile) {
+  const done = Number(profile.semestersCompleted) || 0;
+  return Math.min(8, Math.max(1, done + 1));
+}
+
+/**
+ * What the registration screen starts with.
+ * rows     : the "compulsory courses" list, in curriculum order:
+ *            [{ code, role: 'retake' | 'compulsory', state: 'auto' | 'blocked' | 'notOffered', missing }]
+ *            - every failed compulsory course (any semester): 'auto' when offered, else 'notOffered'
+ *            - every compulsory course of the current semester that is not passed
+ * auto     : codes added automatically (rows with state 'auto')
+ * locked   : retakes that are offered this term; they cannot be removed (Art. 26)
+ * optional : courses the student may add: [{ code, group: 'elective' | 'other', cat, missing }]
+ *            - 'elective': department elective pool courses offered this term (blocked ones included,
+ *              so the UI can say which prerequisite is missing)
+ *            - 'other': any other selectable course (e.g. an earlier course not taken yet, internship)
+ */
+export function registrationPlan(profile, data) {
+  const cls = classify(profile, data);
+  const sem = currentSemester(profile);
+  const rows = [];
+  const seen = new Set();
+  const push = (c, role) => {
+    if (seen.has(c.code)) return;
+    const k = cls[c.code];
+    let state;
+    if (k.cat === 'repeat' || k.cat === 'eligible' || k.cat === 'noData') state = 'auto';
+    else if (k.cat === 'blocked') state = 'blocked';
+    else if (k.cat === 'notOffered') state = 'notOffered';
+    else return; // passed or elective slot
+    seen.add(c.code);
+    rows.push({ code: c.code, role, state, missing: k.missing });
+  };
+  for (const c of data.courses) {
+    if (c.kind === 'course' && c.type === 'Z' && cls[c.code].failed) push(c, 'retake');
+  }
+  for (const c of data.courses) {
+    if (c.kind === 'course' && c.type === 'Z' && c.semester === sem) push(c, cls[c.code].failed ? 'retake' : 'compulsory');
+  }
+  const auto = rows.filter((r) => r.state === 'auto').map((r) => r.code);
+  const locked = rows.filter((r) => r.state === 'auto' && r.role === 'retake' && cls[r.code].cat === 'repeat').map((r) => r.code);
+  const optional = [];
+  for (const c of data.courses) {
+    if (seen.has(c.code)) continue;
+    const k = cls[c.code];
+    if (c.kind === 'elective') {
+      if (SELECTABLE.has(k.cat) || k.cat === 'blocked') optional.push({ code: c.code, group: 'elective', cat: k.cat, missing: k.missing });
+    } else if (c.kind === 'course' && SELECTABLE.has(k.cat)) {
+      optional.push({ code: c.code, group: 'other', cat: k.cat, missing: [] });
+    }
+  }
+  return { semester: sem, rows, auto, locked, optional };
+}
+
+/**
+ * The course codes in the registration: locked retakes always, the other automatic
+ * courses unless the student removed them (`dropped`), plus the courses the student
+ * added (`added`) as long as they can be taken.
+ */
+export function composeSelection(plan, { added = [], dropped = [] } = {}) {
+  const out = [...plan.locked];
+  for (const code of plan.auto) if (!out.includes(code) && !dropped.includes(code)) out.push(code);
+  const ok = new Set(plan.optional.filter((o) => SELECTABLE.has(o.cat)).map((o) => o.code));
+  for (const code of added) if (ok.has(code) && !out.includes(code)) out.push(code);
+  return out;
+}
+
+/** True when the course has timed sections, i.e. the student must pick one. */
+export function needsSection(code, data) {
+  return (data.sectionsByCourse[code] || []).length > 0;
+}
+
+/**
+ * Section number per course: the student's pick (`picks[code]`) when it exists,
+ * otherwise the only option for courses with a single timetable. Courses that
+ * still need a choice (or have no timed sections) are left out.
+ */
+export function resolveSections(codes, picks, data) {
+  const out = {};
+  for (const code of codes) {
+    if (!needsSection(code, data)) continue;
+    const opts = optionsFor(code, data);
+    const pick = picks ? picks[code] : undefined;
+    if (pick !== undefined && pick !== null && opts.some((o) => o.nos.includes(pick))) out[code] = pick;
+    else if (opts.length === 1) out[code] = opts[0].nos[0];
+  }
+  return out;
+}
+
+/** [{ code, no, slots }] for the courses that have a resolved section. */
+export function chosenSections(sections, data) {
+  return Object.keys(sections).map((code) => {
+    const s = (data.sectionsByCourse[code] || []).find((x) => x.no === sections[code]);
+    return { code, no: sections[code], slots: s ? s.slots : [] };
+  });
+}
+
+/**
+ * Every timetable option of `code`, with the chosen sections of OTHER courses it
+ * would overlap: [{ option, clashes: [{ code, shared }] }] (shared = common slots).
+ */
+export function sectionConflicts(code, chosen, data) {
+  return optionsFor(code, data).map((option) => ({
+    option,
+    clashes: chosen
+      .filter((c) => c.code !== code)
+      .map((c) => ({ code: c.code, shared: sharedSlots(option.slots, c.slots) }))
+      .filter((x) => x.shared.length),
+  }));
+}
+
+/** Pairs of chosen sections that overlap: [{ a, b, shared }]. */
+export function chosenClashes(chosen) {
+  const out = [];
+  for (let i = 0; i < chosen.length; i++) {
+    for (let j = i + 1; j < chosen.length; j++) {
+      const shared = sharedSlots(chosen[i].slots, chosen[j].slots);
+      if (shared.length) out.push({ a: chosen[i].code, b: chosen[j].code, shared });
+    }
+  }
+  return out;
+}
+
+/** Registration type of a course: 'retake' | 'internship' | 'compulsory' | 'elective'. */
+export function courseRole(code, profile, data) {
+  const c = data.courseMap[code];
+  if (!c) return 'elective';
+  if (c.type === 'Z' && (profile.status || {})[code] === 'failed') return 'retake';
+  if (c.kind === 'course' && c.noTimetable && c.name === 'STAJ') return 'internship';
+  if (c.type === 'Z') return 'compulsory';
+  return 'elective';
+}
