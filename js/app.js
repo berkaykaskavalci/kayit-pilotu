@@ -3,7 +3,7 @@ import { DATA, META, RULES, OBSERVED, SAMPLE, DEMO_STUDENT } from './data.js';
 import * as E from './engine.js';
 import { STR } from './i18n.js';
 
-const STORE_KEY = 'kayit-pilotu:v2';
+const STORE_KEY = 'kayit-pilotu:v3';
 const OLD_KEY = 'kayit-pilotu:v1';
 const VIEWS = ['home', 'register', 'timetable', 'status', 'rules'];
 const LEGACY = { courses: 'register', schedule: 'register', check: 'register' };
@@ -85,7 +85,9 @@ function load() {
   } catch (e) {
     old = null;
   }
-  if (old && old.hasProfile && old.profile) {
+  const oldProfile = obj(old && old.profile);
+  const oldHasData = Object.keys(obj(oldProfile.status)).length > 0 || typeof oldProfile.cgpa === 'number';
+  if (old && old.hasProfile && oldHasData) {
     base.profile = { ...base.profile, ...obj(old.profile), status: { ...obj(obj(old.profile).status) } };
     base.hasProfile = true;
   } else {
