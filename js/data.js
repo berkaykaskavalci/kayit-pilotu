@@ -371,6 +371,111 @@ function parseSectionLine(line) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// English course names: official Bologna catalogue (lang=en), collected 2026-10-15,
+// stored as in the source (UPPER CASE) and shown in Title Case. Obvious typos in the
+// source were corrected; ME4851 has no English name there and is translated by the team.
+// ---------------------------------------------------------------------------
+const NAMES_EN_RAW = [
+  'CHEM1130|ENGINEERING CHEMISTRY',
+  'EEE2280|ELECTRIC CIRCUITS AND SYSTEMS',
+  'EEE3718|FEEDBACK SYSTEMS',
+  'ENGR1115|INTRODUCTION TO PROGRAMMING',
+  'ENGR2120|INTRO TO COMPUTER AIDED MODELING',
+  'ENGR3450|PROJECT MANAGEMENT',
+  'ENGR4400|ENGINEERING ETHICS AND SEMINAR',
+  'ENGR4411|ENGINEERING FOR SUSTAINABLE DEVELOPMENT',
+  'HIST1110|ATATÜRK\'S PRINCIPLES AND HISTORY OF REVOLUTION I',
+  'HIST1210|ATATÜRK\'S PRINCIPLES AND HISTORY OF REVOLUTION II',
+  'ISG9110|OCCUPATIONAL HEALTH AND SAFETY I',
+  'ISG9210|OCCUPATIONAL HEALTH AND SAFETY II',
+  'MATH1100|MATHEMATICAL LOGIC',
+  'MATH1131|CALCULUS I',
+  'MATH1132|CALCULUS II',
+  'MATH2230|COMPUTATIONAL METHODS IN ENGINEERING',
+  'MATH2260|PROBABILITY AND STATISTICS FOR ENGINEERING',
+  'MATH2263|DIFFERENTIAL EQUATIONS AND DYNAMICAL SYSTEMS',
+  'ME1110|INTRODUCTION TO ME',
+  'ME2210|ENGINEERING MECHANICS I',
+  'ME2220|MECHANICS OF MATERIALS',
+  'ME2320|THERMODYNAMICS',
+  'ME2710|MATERIAL SCIENCE',
+  'ME3220|ENGINEERING MECHANICS II',
+  'ME3320|HEAT AND MASS TRANSFER',
+  'ME3330|FLUID MECHANICS AND MACHINERY',
+  'ME3410|MECHANICAL COMPONENTS',
+  'ME3420|PRODUCTION TECHNOLOGIES AND PROCESSES',
+  'ME3510|THEORY OF MACHINES AND MECHANISMS',
+  'ME4830|INTERNSHIP',
+  'ME4910|SENIOR DESIGN PROJECT I',
+  'ME4920|SENIOR DESIGN PROJECT II',
+  'PHYS1121|PHYSICS I',
+  'PHYS1122|PHYSICS II',
+  'SOFL1101|ENGLISH FOR ACADEMIC PURPOSES I',
+  'SOFL1102|ENGLISH FOR ACADEMIC PURPOSES II',
+  'TURK1110|TURKISH I',
+  'TURK1210|TURKISH II',
+  'UFND7010|SOCIAL RESPONSIBILITY',
+  'UMFD1020|FOUNDATIONS OF CRITICAL AND ANALYTICAL THINKING',
+  'UMFD1120|FOUNDATIONS OF ENTREPRENEURSHIP',
+  'UMFD1220|FOUNDATIONS OF DESIGN THINKING',
+  'UMFD1720|CAREER PLANNING',
+  'ME4110|MECHANICAL COMPONENTS II',
+  'ME4120|INTRODUCTION TO FINITE ELEMENT METHOD',
+  'ME4230|MECHANICAL VIBRATIONS',
+  'ENGR4451|GEN-AI FOR ENGINEERING APPLICATIONS',
+  'ME4340|INTRODUCTION TO TURBOMACHINERY',
+  'ME4210|DYNAMICS OF MACHINERY',
+  'ME4350|GAS DYNAMICS',
+  'ME4420|ENGINEERING MATERIALS',
+  'ME4510|MACHINING PRODUCTION METHODS',
+  'ME4520|SYNTHESIS OF LINKAGES',
+  'ME4610|INTRODUCTION TO MECHATRONIC ENGINEERING',
+  'ME4620|ADVANCED MECHATRONICS',
+  'ME4240|INTRODUCTION TO ROBOT MECHANICS',
+  'ME4410|MECHANICS OF COMPOSITE MATERIALS',
+  'ME4220|MECHANICS OF MATERIALS II',
+  'ME4330|INTRODUCTION TO COMPUTATIONAL FLUID DYNAMICS',
+  'ME4851|INDUSTRIAL EXPERIENCE I',
+  'EEE4122|INDUSTRIAL AUTOMATION',
+  'ESE4112|HVAC-R SYSTEMS',
+  'ESE4212|ENERGY STORAGE SYSTEMS',
+  'ESE3260|WIND ENERGY SYSTEMS',
+  'ESE4240|INTEGRATION OF RENEWABLE ENERGY SYSTEMS',
+];
+
+const EN_SMALL = new Set(['and', 'of', 'for', 'to', 'in', 'the', 'on', 'a', 'an', 'at', 'by', 'or']);
+const EN_KEEP = new Set(['ME', 'HVAC-R', 'I', 'II', 'III', 'IV']);
+
+/** Title Case for the upper-case English names: small words stay lower case unless first. */
+export function titleCaseEn(name) {
+  return name
+    .toLocaleLowerCase('en')
+    .split(' ')
+    .map((w, i) => {
+      const up = w.toLocaleUpperCase('en');
+      if (EN_KEEP.has(up)) return up;
+      if (w === 'gen-ai') return 'Gen-AI';
+      if (i > 0 && EN_SMALL.has(w)) return w;
+      return w.charAt(0).toLocaleUpperCase('en') + w.slice(1);
+    })
+    .join(' ');
+}
+
+export const NAMES_EN = Object.fromEntries(
+  NAMES_EN_RAW.map((l) => {
+    const [code, name] = l.split('|');
+    return [code, titleCaseEn(name)];
+  }),
+);
+
+// Slots (e.g. "ELECT ME A1") have no catalogue entry: derive the English label.
+function slotNameEn(label) {
+  const m = /^(UNV )?ELECT ME ?([A-Z]?\d)$/.exec(label);
+  if (!m) return null;
+  return (m[1] ? 'University Elective ' : 'Department Elective ') + m[2];
+}
+
 export const SEMESTERS = Object.keys(CURRICULUM_RAW).map((k) => {
   const n = Number(k);
   return { n, ects: SEMESTER_ECTS[n], courses: CURRICULUM_RAW[n].map((l) => parseCurriculumLine(l, n)) };
@@ -392,6 +497,7 @@ export const ELECTIVES = ELECTIVE_POOL_RAW.map(([code, name, ects]) => ({
 }));
 
 export const COURSES = [...SEMESTERS.flatMap((s) => s.courses), ...ELECTIVES];
+for (const c of COURSES) c.nameEn = NAMES_EN[c.code] || (c.kind === 'slot' ? slotNameEn(c.label) : null) || null;
 
 export const COURSE_MAP = Object.fromEntries(COURSES.map((c) => [c.code, c]));
 
@@ -438,7 +544,7 @@ export const SAMPLE = buildSample();
 // FICTIONAL display data for the demo student and advisor shown in the interface.
 // Placeholders only: not real people, not a real student number.
 export const DEMO_STUDENT = {
-  name: 'Berkay Örnek',
+  name: 'Demo Student',
   number: 'DEMO-0001',
-  advisor: 'Dr. Örnek Danışman',
+  advisor: 'Dr. Demo Advisor',
 };

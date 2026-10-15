@@ -1,5 +1,5 @@
-// UI strings. Turkish is the default language; English is the alternative.
-// Course names exist only in Turkish in the source and are shown as they are.
+// UI strings. English is the default language; Turkish is the alternative.
+// Course names have both an English (Bologna catalogue) and a Turkish name, see data.js.
 // Both objects must have exactly the same keys (tests.html checks this).
 
 const en = {
@@ -7,6 +7,10 @@ const en = {
   'lang.label': 'Language',
   'top.term': 'Registration term',
   'demo.fictional': 'fictional demo student',
+  'entry.sub': 'Course registration planner for Yaşar University Mechanical Engineering students — unofficial student project',
+  'entry.login': 'Log in as Demo Student',
+  'entry.note': 'No account or password needed. Nothing you do here is sent anywhere.',
+  'top.logout': 'Log out',
   'dlg.close': 'Close',
 
   'view.home': 'Home',
@@ -302,6 +306,7 @@ const en = {
   'rules.src.curriculum': 'Curriculum, elective pool and prerequisites: 2025-2026 Mechanical Engineering Bologna curriculum.',
   'rules.src.regulation': 'Rules: Yaşar University Associate and Undergraduate Education and Examination Regulation (Official Gazette 14.08.2016, no. 29801).',
   'rules.src.timetable': 'Section timetables: OBS department course schedule ("Bölüm Ders Programı"), Mechanical Engineering, 2026-2027 Fall.',
+  'rules.src.names': 'English course names: official Bologna catalogue (English pages), collected 2026-10-15, shown in Title Case. The name of ME 4851 has no English entry there and is translated by the team. Turkish names are as in the Turkish catalogue.',
   'rules.gapTitle': 'What this tool does not know',
   'rules.g1': 'SOFL 1101 / SOFL 1102 sections (30+ sections were not captured). Their ECTS can be counted but times are not checked.',
   'rules.g2': 'Live quota. Only room capacity is public.',
@@ -328,6 +333,10 @@ const tr = {
   'lang.label': 'Dil',
   'top.term': 'Kayıt dönemi',
   'demo.fictional': 'kurgusal demo öğrencisi',
+  'entry.sub': 'Yaşar Üniversitesi Makine Mühendisliği öğrencileri için ders kaydı planlayıcısı — resmi olmayan öğrenci projesi',
+  'entry.login': 'Demo öğrenci olarak giriş yap',
+  'entry.note': 'Hesap veya şifre gerekmez. Burada yaptığın hiçbir şey bir yere gönderilmez.',
+  'top.logout': 'Çıkış yap',
   'dlg.close': 'Kapat',
 
   'view.home': 'Ana Sayfa',
@@ -623,6 +632,7 @@ const tr = {
   'rules.src.curriculum': 'Müfredat, seçmeli havuzu ve önkoşullar: 2025-2026 Makine Mühendisliği Bologna müfredatı.',
   'rules.src.regulation': 'Kurallar: Yaşar Üniversitesi Ön Lisans ve Lisans Eğitim-Öğretim ve Sınav Yönetmeliği (Resmi Gazete 14.08.2016, sayı 29801).',
   'rules.src.timetable': 'Şube ders saatleri: OBS "Bölüm Ders Programı", Makine Mühendisliği, 2026-2027 Güz.',
+  'rules.src.names': 'İngilizce ders adları: resmi Bologna kataloğu (İngilizce sayfalar), 2026-10-15 tarihinde alındı, Title Case olarak gösterilir. ME 4851 için kaynakta İngilizce ad yoktur, ekip çevirmiştir. Türkçe adlar Türkçe kataloğdaki gibidir.',
   'rules.gapTitle': 'Bu aracın bilmedikleri',
   'rules.g1': 'SOFL 1101 / SOFL 1102 şubeleri (30\'dan fazla şube kaydedilemedi). AKTS\'leri sayılabilir ama ders saatleri kontrol edilmez.',
   'rules.g2': 'Canlı kontenjan. Yalnızca derslik kapasitesi herkese açık.',

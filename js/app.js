@@ -3,8 +3,9 @@ import { DATA, META, RULES, OBSERVED, SAMPLE, DEMO_STUDENT } from './data.js';
 import * as E from './engine.js';
 import { STR } from './i18n.js';
 
-const STORE_KEY = 'kayit-pilotu:v3';
+const STORE_KEY = 'kayit-pilotu:v4';
 const OLD_KEY = 'kayit-pilotu:v1';
+const ENTER_KEY = 'kayit-pilotu:entered';
 const VIEWS = ['home', 'register', 'timetable', 'status', 'rules'];
 const LEGACY = { courses: 'register', schedule: 'register', check: 'register' };
 // Ordered so that the first few hues are far apart on the colour wheel.
@@ -20,7 +21,7 @@ const PAGE = 12; // plan cards shown per "show more"
 // ---------------------------------------------------------------------------
 function fresh() {
   return {
-    lang: 'tr',
+    lang: 'en',
     hasProfile: false,
     profile: { status: {}, cgpa: null, semestersCompleted: 0, graduating: false },
     added: [], // courses the student added (electives, earlier courses, internship)
@@ -71,7 +72,7 @@ function load() {
         dropped: arr(s.dropped),
         picks: obj(s.picks),
         reg: s.reg === 'pending' ? 'pending' : 'draft',
-        lang: s.lang === 'en' ? 'en' : 'tr',
+        lang: s.lang === 'tr' ? 'tr' : 'en',
       };
     } catch (e) {
       /* fall through to a fresh start */
@@ -106,6 +107,21 @@ function save() {
 }
 
 let state = load();
+let entered = false;
+try {
+  entered = sessionStorage.getItem(ENTER_KEY) === '1';
+} catch (e) {
+  /* storage unavailable: the entry screen shows on every load */
+}
+function setEntered(v) {
+  entered = v;
+  try {
+    if (v) sessionStorage.setItem(ENTER_KEY, '1');
+    else sessionStorage.removeItem(ENTER_KEY);
+  } catch (e) {
+    /* ignore */
+  }
+}
 const ui = { focus: null, navOpen: false, sg: null, sent: false, openers: {} };
 
 function viewFromHash() {
@@ -132,8 +148,9 @@ function t(key, vars) {
 
 const course = (code) => DATA.courseMap[code];
 const lbl = (code) => (DATA.courseMap[code] ? DATA.courseMap[code].label : code);
-const cname = (c) => (c.name ? esc(c.name) : `<span class="muted">${t('nameMissing')}</span>`);
-const cnamePlain = (c) => c.name || t('nameMissing');
+const nameOf = (c) => (state.lang === 'en' ? c.nameEn || c.name : c.name || c.nameEn);
+const cname = (c) => (nameOf(c) ? esc(nameOf(c)) : `<span class="muted">${t('nameMissing')}</span>`);
+const cnamePlain = (c) => nameOf(c) || t('nameMissing');
 const term = () => (state.lang === 'tr' ? META.termTr : META.term);
 const program = () => (state.lang === 'tr' ? META.programTr : META.program);
 const fmtRange = (r) => `${t('day.' + r.d)} ${E.slotStart(r.from)}–${E.slotEnd(r.to)}`;
@@ -231,7 +248,14 @@ const isLocked = () => state.reg === 'pending';
 // ---------------------------------------------------------------------------
 function renderChrome(d) {
   document.documentElement.lang = state.lang;
-  document.title = `${t('view.' + view)} · Kayıt Pilotu`;
+  document.title = entered ? `${t('view.' + view)} · Kayıt Pilotu` : 'Kayıt Pilotu';
+  document.body.classList.toggle('is-entry', !entered);
+  $('#entry').hidden = entered;
+  $('#entry-sub').textContent = t('entry.sub');
+  $('#entry-login').textContent = t('entry.login');
+  $('#entry-note').textContent = t('entry.note');
+  $('#entry .lang').setAttribute('aria-label', t('lang.label'));
+  $('#logout').textContent = t('top.logout');
   $('#skip').textContent = t('skip');
   $('#brand-t').textContent = 'Kayıt Pilotu';
   $('#brand').setAttribute('aria-label', `Kayıt Pilotu — ${t('view.home')}`);
@@ -776,7 +800,7 @@ function viewRules() {
   h += `</ul><p class="note">${t('rules.limitNote')}</p><p class="note">${esc(OBSERVED[L])}</p></section>`;
   h += `<section class="card" aria-labelledby="src-t"><h2 id="src-t" class="h3">${t('rules.srcTitle')}</h2><p>${t('rules.collected', { date: META.collected, term: esc(term()) })}</p><ul class="bul">`;
   for (const s of META.sources) h += `<li>${t('rules.src.' + s.id)}<br><a href="${esc(s.url)}" rel="noopener noreferrer" target="_blank" class="url">${esc(s.url)}</a></li>`;
-  h += `<li>${t('rules.src.timetable')}</li></ul></section>`;
+  h += `<li>${t('rules.src.timetable')}</li><li>${t('rules.src.names')}</li></ul></section>`;
   h += `<section class="card" aria-labelledby="gap-t"><h2 id="gap-t" class="h3">${t('rules.gapTitle')}</h2><ul class="bul">${['g1', 'g2', 'g3', 'g4', 'g5'].map((k) => `<li>${t('rules.' + k)}</li>`).join('')}</ul></section>`;
   return h;
 }
@@ -1426,11 +1450,18 @@ document.addEventListener('click', (e) => {
     case 'nav':
       setNav(!ui.navOpen);
       return;
+    case 'enter':
+      setEntered(true);
+      render({ focusTitle: true });
+      return;
+    case 'logout':
+      leave();
+      return;
     case 'nav-close':
       setNav(false, { returnFocus: true });
       return;
     case 'lang':
-      state.lang = el.dataset.lang === 'en' ? 'en' : 'tr';
+      state.lang = el.dataset.lang === 'tr' ? 'tr' : 'en';
       break;
     case 'sample': {
       const lang = state.lang;
@@ -1620,7 +1651,19 @@ window.addEventListener('hashchange', () => {
 // ---------------------------------------------------------------------------
 if (DEMO) document.documentElement.classList.add('is-demo');
 
+function leave() {
+  for (const id of ['dlg-suggest', 'dlg-summary']) closeDialog(id);
+  if (ui.navOpen) setNav(false);
+  setEntered(false);
+  render();
+  $('#entry-login').focus({ preventScroll: true });
+}
+
 window.kpDemo = {
+  /** Return to the entry screen (the video script starts here). */
+  showEntry() {
+    leave();
+  },
   /** Show a subtitle-style caption at the bottom of the viewport; null hides it. */
   caption(text) {
     const el = $('#demo-caption');
@@ -1670,6 +1713,7 @@ window.kpDemo = {
 
 try {
   render();
+  if (!entered) $('#entry-login').focus({ preventScroll: true });
 } catch (err) {
   // Stored state that no longer matches the expected shape: start clean instead of a blank page.
   let retried = true;
