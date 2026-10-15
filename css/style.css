@@ -657,3 +657,37 @@ details.card[open] > summary::after { content: "\2013"; }
   .print-area .tt { min-width: 0; margin-bottom: 14px; }
   .print-area .blk, .print-area .badge { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* Entry screen: neutral sign-in-style card, no credentials, no university branding */
+.logout { flex: none; }
+.entry {
+  position: fixed; inset: 0; z-index: 100; overflow-y: auto;
+  display: grid; place-items: center; padding: 24px 16px;
+  background:
+    radial-gradient(900px 500px at 15% 0%, var(--accent-soft), transparent 70%),
+    radial-gradient(700px 420px at 100% 100%, var(--surface-3), transparent 70%),
+    var(--bg);
+}
+.entry[hidden] { display: none; }
+.is-entry .topbar, .is-entry .shell, .is-entry .skip { display: none; }
+.entry-card {
+  position: relative; width: 100%; max-width: 440px; box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: center; text-align: center; gap: 14px;
+  padding: 48px 32px 28px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  box-shadow: 0 2px 4px rgba(20, 30, 50, 0.06), 0 24px 60px rgba(20, 30, 50, 0.16);
+}
+.entry-lang { position: absolute; top: 14px; right: 14px; }
+.mark-lg { width: 64px; height: 64px; border-radius: 16px; font-size: 1.5rem; }
+.entry-title { margin: 4px 0 0; font-size: 1.8rem; line-height: 1.15; }
+.entry-sub { margin: 0; color: var(--muted); line-height: 1.5; max-width: 34ch; }
+.entry-btn { width: 100%; margin-top: 10px; min-height: 50px; font-size: 1.05rem; }
+.entry-note { margin: 4px 0 0; max-width: 36ch; }
+@media (max-width: 420px) {
+  .entry-card { padding: 52px 20px 22px; }
+  .logout { padding: 4px 8px; }
+}
+@media (max-width: 520px) {
+  .topbar .brand-t, .topbar .who { display: none; }
+  .top-right { gap: 8px; }
+}
