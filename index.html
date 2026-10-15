@@ -1,42 +1,57 @@
 <!doctype html>
-<html lang="tr">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Kayıt Pilotu: ders kaydı açılmadan önce plan yapmanı sağlayan, resmi olmayan bir ön kayıt planlayıcısı.">
+  <meta name="description" content="Kayıt Pilotu: an unofficial pre-registration planner that lets you plan your course registration before it opens.">
   <title>Kayıt Pilotu</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <a class="skip" id="skip" href="#main" data-act="skip">İçeriğe geç</a>
+  <section class="entry" id="entry" data-testid="entry-screen" aria-labelledby="entry-title" hidden>
+    <div class="entry-card">
+      <div class="entry-lang lang" role="group" aria-label="Language">
+        <button type="button" data-act="lang" data-lang="tr" aria-pressed="false" lang="tr" data-testid="entry-lang-tr">TR</button>
+        <button type="button" data-act="lang" data-lang="en" aria-pressed="true" lang="en" data-testid="entry-lang-en">EN</button>
+      </div>
+      <span class="mark-kp mark-lg" aria-hidden="true">KP</span>
+      <h1 id="entry-title" class="entry-title">Kayıt Pilotu</h1>
+      <p class="entry-sub" id="entry-sub">Course registration planner for Yaşar University Mechanical Engineering students — unofficial student project</p>
+      <button type="button" class="btn btn-primary entry-btn" id="entry-login" data-act="enter" data-testid="entry-login">Log in as Demo Student</button>
+      <p class="entry-note small muted" id="entry-note">No account or password needed. Nothing you do here is sent anywhere.</p>
+    </div>
+  </section>
+
+  <a class="skip" id="skip" href="#main" data-act="skip">Skip to content</a>
 
   <header class="topbar">
-    <button type="button" class="icon-btn nav-toggle" id="nav-toggle" data-act="nav" aria-controls="sidebar" aria-expanded="false" aria-label="Menüyü aç" data-testid="nav-toggle">
+    <button type="button" class="icon-btn nav-toggle" id="nav-toggle" data-act="nav" aria-controls="sidebar" aria-expanded="false" aria-label="Open menu" data-testid="nav-toggle">
       <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
     <a class="brand" id="brand" href="#home" data-testid="brand"><span class="mark-kp" aria-hidden="true">KP</span><span class="brand-t" id="brand-t">Kayıt Pilotu</span></a>
     <div class="top-right">
-      <span class="term-chip" id="term-chip" data-testid="term-chip">2026-2027 Güz</span>
-      <div class="lang" id="langgroup" role="group" aria-label="Dil">
-        <button type="button" data-act="lang" data-lang="tr" id="lang-tr" aria-pressed="true" lang="tr" data-testid="lang-tr">TR</button>
-        <button type="button" data-act="lang" data-lang="en" id="lang-en" aria-pressed="false" lang="en" data-testid="lang-en">EN</button>
+      <span class="term-chip" id="term-chip" data-testid="term-chip">2026-2027 Fall</span>
+      <div class="lang" id="langgroup" role="group" aria-label="Language">
+        <button type="button" data-act="lang" data-lang="tr" id="lang-tr" aria-pressed="false" lang="tr" data-testid="lang-tr">TR</button>
+        <button type="button" data-act="lang" data-lang="en" id="lang-en" aria-pressed="true" lang="en" data-testid="lang-en">EN</button>
       </div>
       <div class="who" id="who" data-testid="student-name">
         <span class="avatar" id="who-av" aria-hidden="true"></span>
         <span class="who-txt"><span class="who-name" id="who-name"></span><span class="who-sub" id="who-sub"></span></span>
       </div>
+      <button type="button" class="btn btn-small logout" id="logout" data-act="logout" data-testid="logout">Log out</button>
     </div>
   </header>
 
   <div class="shell">
-    <aside class="side" id="sidebar" aria-label="Ana menü">
+    <aside class="side" id="sidebar" aria-label="Main menu">
       <nav id="nav"></nav>
     </aside>
     <div class="scrim" data-act="nav-close" aria-hidden="true"></div>
     <div class="content">
       <main id="main" tabindex="-1">
-        <noscript><p class="card">Bu planlayıcı JavaScript gerektirir.</p></noscript>
+        <noscript><p class="card">This planner requires JavaScript.</p></noscript>
       </main>
       <footer class="foot" id="foot"></footer>
     </div>

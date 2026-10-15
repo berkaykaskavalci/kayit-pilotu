@@ -15,7 +15,9 @@ timetable of the Mechanical Engineering programme.
 ## The flow
 
 The app is laid out like a student information system (sidebar, term chip, EN/TR toggle), but it is our own
-neutral design ("KP" mark), with a fictional demo student and no login.
+neutral design ("KP" mark), with a fictional demo student ("Demo Student") and no login. The app opens on an
+entry screen with a single "Log in as Demo Student" button: there are no username, number or password fields,
+no credentials are asked for or stored, and nothing is sent anywhere. "Log out" in the top bar returns to it.
 
 1. **Ana Sayfa (home)** – student card (fictional), CGPA with the resulting ECTS limit (40 with a CGPA of 2.00 or
    above, otherwise 32) and its article, passed ECTS out of 240, registration status, advisor (placeholder) and a
@@ -39,14 +41,16 @@ neutral design ("KP" mark), with a fictional demo student and no login.
 6. **Durumum** – mark every curriculum course as passed, failed or not taken, enter CGPA, semesters completed and
    the graduation flag. **Kurallar ve Kaynaklar** – rules, sources, data date and disclaimers.
 
-Everything is stored only in the browser (localStorage). The interface is in Turkish by default, with an EN/TR
-toggle (the stored choice wins). Course names are shown in Turkish, as in the source.
+Everything is stored only in the browser (localStorage). The interface is in English by default, with an EN/TR
+toggle (the stored choice wins). Course names follow the language: English names come from the official Bologna
+catalogue (English pages, collected 2026-10-15, shown in Title Case; the name of ME 4851 has no English entry
+there and is translated by the team), Turkish names are as in the Turkish catalogue.
 
 ### Demo mode (for screen recordings)
 
 Open `index.html?demo=1`. `window.kpDemo.caption(text)` shows a subtitle-style caption at the bottom of the
 screen (`caption(null)` hides it), `window.kpDemo.reset()` restores the sample student and clears the
-registration. Interactive elements carry stable `data-testid` attributes.
+registration (it does not skip the entry screen; `window.kpDemo.showEntry()` returns to it). Interactive elements carry stable `data-testid` attributes.
 
 ## Data sources
 
@@ -74,7 +78,7 @@ under a sub-path such as GitHub Pages.
 ## Structure
 
 - `index.html`, `css/style.css` – page shell and styles
-- `js/data.js` – curriculum, prerequisites, sections and rules, transcribed from the source file
+- `js/data.js` – curriculum, English and Turkish course names, prerequisites, sections and rules, transcribed from the source file
 - `js/engine.js` – rules, scheduling and registration logic (pure functions, no DOM)
 - `js/i18n.js` – English and Turkish interface texts
 - `js/app.js` – state, rendering and events
@@ -88,6 +92,7 @@ under a sub-path such as GitHub Pages.
 - Room capacity is shown, not the live enrolment quota (which is not public).
 - SOFL 1101 / SOFL 1102 sections were not captured: their ECTS can be counted, but their times are not checked.
 - The A/B group of each department elective and the university elective list are not in the data.
+- The English course names are from the catalogue as collected on 2026-10-15 and may change.
 - Grades are not tracked, so repeating passed courses (C-, D+, D) is not modelled.
 - The student, student number, advisor, financial status and advisor approval are fictional demo values.
 - The 32 / 40 ECTS limits (40 with a CGPA of 2.00 or above, otherwise 32; 32 also when no CGPA is entered or in the

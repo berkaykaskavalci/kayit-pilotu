@@ -25,7 +25,7 @@
 
   <script type="module">
     import * as E from './js/engine.js';
-    import { DATA, SEMESTERS, SEMESTER_ECTS, SECTIONS, COURSE_MAP, PREREQS, ELECTIVES, SAMPLE, RULES, DEMO_STUDENT } from './js/data.js';
+    import { NAMES_EN, titleCaseEn, DATA, SEMESTERS, SEMESTER_ECTS, SECTIONS, COURSE_MAP, PREREQS, ELECTIVES, SAMPLE, RULES, DEMO_STUDENT } from './js/data.js';
     import { STR } from './js/i18n.js';
 
     const results = [];
@@ -327,7 +327,13 @@
       const trKeys = Object.keys(STR.tr).sort();
       eq(enKeys.filter((k) => !STR.tr[k]), [], 'every English key has a Turkish text');
       eq(trKeys.filter((k) => !STR.en[k]), [], 'every Turkish key has an English text');
-      ok(DEMO_STUDENT && /Örnek/.test(DEMO_STUDENT.name) && /Örnek/.test(DEMO_STUDENT.advisor), 'demo student and advisor are visibly fictional placeholders');
+      ok(DEMO_STUDENT && /Demo/.test(DEMO_STUDENT.name) && /Demo/.test(DEMO_STUDENT.advisor), 'demo student and advisor are visibly fictional placeholders');
+      ok(DATA.courses.every((c) => typeof c.nameEn === 'string' && c.nameEn.length > 0), 'every course code in the data has an English name', DATA.courses.filter((c) => !c.nameEn).map((c) => c.code).join(','));
+      ok(Object.keys(NAMES_EN).length >= 60 && ELECTIVES.every((c) => NAMES_EN[c.code]), 'English names cover the curriculum and the elective pool');
+      eq(titleCaseEn('DIFFERENTIAL EQUATIONS AND DYNAMICAL SYSTEMS'), 'Differential Equations and Dynamical Systems', 'title case keeps small words lower case');
+      eq(titleCaseEn('INTRODUCTION TO ME'), 'Introduction to ME', 'title case keeps ME upper case');
+      eq(titleCaseEn('ENGINEERING MECHANICS II'), 'Engineering Mechanics II', 'title case keeps roman numerals');
+      eq(titleCaseEn('GEN-AI FOR ENGINEERING APPLICATIONS'), 'Gen-AI for Engineering Applications', 'title case handles Gen-AI and for');
     } catch (err) {
       results.push({ section: 'Runtime', name: 'tests threw: ' + (err && err.stack ? err.stack : err), pass: false });
     }
