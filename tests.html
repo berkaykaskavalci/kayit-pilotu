@@ -27,6 +27,16 @@
     import * as E from './js/engine.js';
     import { NAMES_EN, titleCaseEn, DATA, SEMESTERS, SEMESTER_ECTS, SECTIONS, COURSE_MAP, PREREQS, ELECTIVES, SAMPLE, RULES, DEMO_STUDENT } from './js/data.js';
     import { STR } from './js/i18n.js';
+    import * as U from './js/util.js';
+    import * as A from './js/attendance.js';
+    import * as G from './js/grades.js';
+    import * as C from './js/calendar.js';
+    import * as I from './js/ics.js';
+    import * as M from './js/importer.js';
+    import * as K from './js/catalog.js';
+    import * as P from './js/plan.js';
+    import * as R from './js/roadmap.js';
+    import { CALENDAR, CLASS_TERM } from './js/data-extra.js';
 
     const results = [];
     let section = '';
@@ -334,8 +344,360 @@
       eq(titleCaseEn('INTRODUCTION TO ME'), 'Introduction to ME', 'title case keeps ME upper case');
       eq(titleCaseEn('ENGINEERING MECHANICS II'), 'Engineering Mechanics II', 'title case keeps roman numerals');
       eq(titleCaseEn('GEN-AI FOR ENGINEERING APPLICATIONS'), 'Gen-AI for Engineering Applications', 'title case handles Gen-AI and for');
+
+      // ------------------------------------------------------------------
+      group('Number guards (no NaN on screen)');
+      eq([U.toNum('1,88'), U.toNum(' 2.5 '), U.toNum('-3'), U.toNum('.5'), U.toNum(7)], [1.88, 2.5, -3, 0.5, 7], 'toNum accepts decimal comma, spaces, sign, leading dot');
+      eq([U.toNum(''), U.toNum('abc'), U.toNum('1.2.3'), U.toNum('1e999'), U.toNum(NaN), U.toNum(Infinity), U.toNum(null), U.toNum(undefined), U.toNum({})], [null, null, null, null, null, null, null, null, null], 'toNum rejects empty, text, NaN, Infinity, null, undefined, objects');
+      eq([U.fmtNum(NaN), U.fmtNum(undefined), U.fmtNum(null), U.fmtNum(Infinity), U.fmtNum('3')], ['—', '—', '—', '—', '—'], 'fmtNum shows a dash for anything that is not a finite number');
+      eq([U.fmtNum(1.875, { digits: 2 }), U.fmtNum(1.875, { digits: 2, lang: 'tr' }), U.fmtNum(-0.0001, { digits: 1 }), U.fmtNum(12.6, { digits: 1 })], ['1.88', '1,88', '0.0', '12.6'], 'fmtNum rounds half up, uses a comma in Turkish and never shows -0');
+      eq([U.ratio(1, 0), U.ratio(NaN, 2), U.ratio(3, 4)], [null, null, 0.75], 'ratio guards division by zero and NaN');
+      eq([U.clamp(NaN, 0, 4), U.clamp(5, 0, 4), U.clamp(-1, 0, 4)], [0, 4, 0], 'clamp turns NaN into the lower bound');
+      ok(U.hasBadText('CGPA NaN') && U.hasBadText('undefined ECTS') && U.hasBadText('[object Object]') && !U.hasBadText('Nanotechnology, 12.6 h'), 'hasBadText spots NaN / undefined / [object Object] but not normal words');
+
+      // ------------------------------------------------------------------
+      group('Attendance (Art. 29(2))');
+      eq(A.parseTul('3+2+0'), { t: 3, u: 2, l: 0 }, 'T+U+L is parsed');
+      eq([A.parseTul(null), A.parseTul('-'), A.parseTul('3+x+0')], [null, null, null], 'missing or malformed T+U+L gives null');
+      const l2263 = A.attendanceLimits(COURSE_MAP.MATH2263.tul);
+      eq([l2263.theoryHours, l2263.theoryAllowed, l2263.practiceHours, l2263.practiceAllowed], [42, 12.6, 28, 5.6], 'MATH 2263 (3+2+0): theory 42 h -> 12.6 h allowed; practice 28 h -> 5.6 h (EXTRA_DATA C)');
+      const lUfnd = A.attendanceLimits(COURSE_MAP.UFND7010.tul);
+      eq([lUfnd.theoryAllowed, lUfnd.practiceAllowed], [0, 5.6], 'UFND 7010 (0+2+0): practice only');
+      const l4910 = A.attendanceLimits(COURSE_MAP.ME4910.tul);
+      eq([l4910.theoryAllowed, l4910.practiceAllowed], [4.2, 11.2], 'ME 4910 (1+4+0): 4.2 h theory, 11.2 h practice');
+      eq(A.attendanceLimits(COURSE_MAP.ENGR4451.tul), null, 'electives without T+U+L in the source get no invented limit');
+      ok(DATA.courses.filter((c) => c.tul).every((c) => { const x = A.attendanceLimits(c.tul); return Object.values(x).every(U.isNum); }), 'every course with T+U+L gives finite limits');
+      eq(A.wholeHours(12.6), 12, 'at most 12 whole hours can be missed when 12.6 h are allowed');
+      eq(A.attendanceStatus(0, 12.6).state, 'ok', '0 h used: ok');
+      eq(A.attendanceStatus(9, 12.6).state, 'ok', '9 of 12.6 h (71%): ok');
+      eq(A.attendanceStatus(9.45, 12.6).state, 'warn', '75% used: warning');
+      eq(A.attendanceStatus(12, 12.6).state, 'last', '12 of 12.6 h: one more hour goes over');
+      eq(A.attendanceStatus(13, 12.6).state, 'over', '13 of 12.6 h: over the limit');
+      eq(A.attendanceStatus(5, 5.6).state, 'last', 'practice 5 of 5.6 h: one more hour goes over');
+      eq(A.attendanceStatus(3, 0).state, 'none', 'no hours of that kind: no status');
+      const sNaN = A.attendanceStatus(NaN, NaN);
+      ok(sNaN.state === 'none' && Object.values(sNaN).filter((v) => typeof v === 'number').every(U.isNum), 'NaN input gives a safe "none" status with finite numbers');
+      eq(A.attendanceStatus(-4, 12.6).used, 0, 'negative usage counts as 0');
+      eq([A.cleanUsed('3'), A.cleanUsed(-1), A.cleanUsed('x'), A.cleanUsed(2.6), A.cleanUsed(500, 42)], [3, 0, 0, 3, 42], 'stored usage is cleaned to whole, non-negative, capped hours');
+      eq([A.worstState('ok', 'last'), A.worstState('over', 'warn')], ['last', 'over'], 'the more serious state wins for the course badge');
+
+      // ------------------------------------------------------------------
+      group('Grades and final needed (Bologna weights)');
+      eq(Object.keys(G.ASSESSMENTS).length, 41, 'all 41 assessment lines of EXTRA_DATA A are parsed');
+      ok(Object.keys(G.ASSESSMENTS).every((c) => COURSE_MAP[c]), 'every assessed course exists in the data');
+      eq(Object.values(G.ASSESSMENTS).filter((s) => !s.complete).map((s) => [s.code, s.total]), [['ESE3260', 60], ['UMFD1720', 40]], 'exactly ESE3260 (60%) and UMFD1720 (40%) are incomplete in the source');
+      ok(Object.values(G.ASSESSMENTS).filter((s) => !s.complete).every((s) => s.sourceNote), 'incomplete schemes keep the source note');
+      eq(Object.values(G.ASSESSMENTS).filter((s) => s.complete && !s.hasFinal).map((s) => s.code), ['ENGR4411', 'ENGR4451'], 'ENGR4411 and ENGR4451 have no final');
+      const s3320 = G.ASSESSMENTS.ME3320;
+      eq(s3320.items.map((i) => [i.name, i.count, i.weight]), [['Mid-Term', 1, 30], ['Quiz', 2, 20], ['Practice', 1, 10], ['Final', 1, 40]], 'ME3320 scheme is parsed item by item');
+      eq(G.itemAverage(s3320.items[1], [80, 70]), { avg: 75, entered: 2, needed: 2, complete: true }, 'Quiz~2 is the average of both quizzes');
+      eq(G.itemAverage(s3320.items[1], [80]).complete, false, 'one of two quizzes entered: not complete yet');
+      eq(G.itemAverage(G.ASSESSMENTS.MATH2263.items[2], [88]).complete, true, 'Practice~14 takes one average score (more than 4 instances)');
+      eq(G.itemAverage(s3320.items[0], [120]).entered, 0, 'scores above 100 are ignored');
+      const fn = G.finalNeeded(s3320, { 0: [60], 1: [80, 70], 2: [90] });
+      eq(fn.earned, 42, 'ME3320: 60×30% + 75×20% + 90×10% = 42 points before the final');
+      const row = (l) => fn.rows.find((r) => r.letter === l);
+      eq([row('A').need, row('A').state], [null, 'impossible'], 'A needs (90-42)/0.4 = 120 -> impossible');
+      eq([row('B+').need, row('B+').state], [95, 'need'], 'B+ needs (80-42)/0.4 = 95');
+      eq(row('C').need, 45, 'C needs (60-42)/0.4 = 45');
+      eq(row('D').need, 7.5, 'D needs (45-42)/0.4 = 7.5');
+      const fnRound = G.finalNeeded(G.ASSESSMENTS.MATH2260, { 0: [61], 1: [77] }); // earned 24.4+7.7 = 32.1; C: (60-32.1)/0.5 = 55.8
+      eq(fnRound.rows.find((r) => r.letter === 'C').need, 55.8, 'needed final is exact to one decimal (MATH2260, C: 55.8)');
+      const fnUp = G.finalNeeded(G.ASSESSMENTS.ME3220, { 0: [77] }); // earned 30.8; B: (75-30.8)/0.6 = 73.666… -> 73.7
+      eq(fnUp.rows.find((r) => r.letter === 'B').need, 73.7, 'needed final is rounded UP (73.67 -> 73.7), never down');
+      const secured = G.finalNeeded(G.ASSESSMENTS.ME2710, { 0: [100, 100] });
+      eq(secured.rows.find((r) => r.letter === 'C').state, 'secured', 'ME2710 with 60 points before the final: C is secured with any final');
+      eq(G.finalNeeded(G.ASSESSMENTS.ME4610, {}).rows.find((r) => r.letter === 'A').need, 90, 'ME4610 (final 100%): the final score is the course score');
+      eq(G.finalNeeded(s3320, { 0: [60] }).status, 'missing', 'non-final items not entered yet: no projection');
+      eq(G.finalNeeded(G.ASSESSMENTS.ESE3260, { 0: [90], 1: [90, 90], 2: [90], 3: [90] }).status, 'incomplete', 'incomplete weights (ESE3260): never projected');
+      eq(G.finalNeeded(G.ASSESSMENTS.ESE3260, {}).rows, [], 'incomplete weights give no letter rows');
+      eq(G.finalNeeded(null, {}).status, 'noScheme', 'a course without weights in the source says so');
+      eq(G.finalNeeded(G.ASSESSMENTS.ENGR4451, {}).status, 'noFinal', 'ENGR4451 (project 100%) has no final to compute');
+      const tw = G.totalWithoutFinal(G.ASSESSMENTS.ENGR4411, { 0: [70], 1: [80], 2: [90] });
+      eq([tw.total, tw.letter], [82, 'B+'], 'ENGR4411 without final: 21 + 16 + 45 = 82 -> B+ (example thresholds)');
+      eq(G.totalWithoutFinal(G.ASSESSMENTS.ENGR4411, { 0: [70] }).total, null, 'no-final course with missing items: no total yet');
+      ok(G.validThresholds(G.DEFAULT_THRESHOLDS), 'default thresholds are valid');
+      ok(!G.validThresholds({ ...G.DEFAULT_THRESHOLDS, B: 81 }) && !G.validThresholds({ ...G.DEFAULT_THRESHOLDS, D: NaN }), 'non-decreasing or NaN thresholds are rejected');
+      eq(G.finalNeeded(s3320, { 0: [60], 1: [80, 70], 2: [90] }, { ...G.DEFAULT_THRESHOLDS, A: 'x' }).status, 'badThresholds', 'invalid thresholds: no projection instead of NaN');
+      eq([G.letterFor(90), G.letterFor(89.99), G.letterFor(44), G.letterFor(NaN)], ['A', 'A-', 'F', null], 'letterFor uses the thresholds and guards NaN');
+      eq(G.LETTERS.map((x) => x.gp), [4, 3.7, 3.3, 3, 2.7, 2.3, 2, 1.7, 1.3, 1, 0], 'standard 4.00 letter scale');
+      eq(G.letterKey('A-') + G.letterKey('B+'), 'AmBp', 'letter keys are safe for ids');
+      ok(Object.values(G.ASSESSMENTS).every((s) => { const r = G.finalNeeded(s, {}); return r.rows.every((x) => x.need === null || U.isNum(x.need)); }), 'no scheme ever produces a NaN target');
+
+      // ------------------------------------------------------------------
+      group('Calendar');
+      ok(C.isIso('2026-10-23') && !C.isIso('2026-02-30') && !C.isIso('23.10.2026') && !C.isIso(''), 'ISO dates are validated (2026-02-30 is rejected)');
+      eq([C.weekday('2026-09-21'), C.weekday('2026-10-28'), C.weekday('2026-10-29'), C.weekday('2026-11-07')], [0, 2, 3, 5], 'weekdays: 21 Sep Mon, 28 Oct Wed, 29 Oct Thu, 7 Nov Sat (as the calendar says)');
+      eq(C.daysBetween('2026-10-23', '2026-10-28'), 5, 'days between two dates');
+      eq(C.addDays('2026-12-31', 1), '2027-01-01', 'adding days crosses the year');
+      eq(C.resolveToday('?today=2026-09-10'), '2026-09-10', '?today=YYYY-MM-DD sets "today"');
+      eq(C.resolveToday('?today=2026-13-40', new Date(2026, 9, 23)), '2026-10-23', 'an invalid ?today falls back to the real date');
+      ok(CALENDAR.every((e) => C.isIso(e.start) && C.isIso(e.end) && e.end >= e.start && e.en && e.tr), 'every official event has valid dates and both languages');
+      eq(new Set(CALENDAR.map((e) => e.id)).size, CALENDAR.length, 'event ids are unique');
+      const up = C.upcoming(CALENDAR, '2026-10-23', { withinDays: 21 });
+      eq(up.map((e) => e.id), ['hol-republic', 'fall-makeup-1'], 'from 23 Oct 2026, the next 21 days hold the Republic Day break and the first make-up day');
+      eq(C.nextOfKind(CALENDAR, 'registration', '2026-10-23').id, 'spring-reg', 'next registration window after 23 Oct 2026 is Spring (26-29 Jan 2027)');
+      eq(C.nextOfKind(CALENDAR, 'registration', '2026-09-15').state, 'ongoing', 'on 15 Sep 2026 the Fall registration is ongoing');
+      eq(C.relativeEvents(CALENDAR, '2026-10-23').find((e) => e.id === 'fall-withdraw').state, 'past', 'the withdrawal deadline (9 Oct) is past on 23 Oct');
+      eq(C.countdown(Date.UTC(2027, 0, 26), Date.UTC(2026, 9, 23)), { past: false, days: 95, hours: 0, minutes: 0 }, 'countdown in days, hours, minutes');
+      eq(C.countdown(1, 2).past, true, 'a past target says so');
+      eq(C.countdown(NaN, 0), null, 'countdown guards NaN');
+      eq([C.parseTime('09:30'), C.parseTime('24:00'), C.parseTime('9:30')], [570, null, null], 'HH:MM times are validated');
+      eq(C.parseLocalDateTime('2027-01-26T10:00'), { date: '2027-01-26', time: '10:00' }, 'datetime-local values are parsed');
+
+      // ------------------------------------------------------------------
+      group('iCalendar export');
+      eq(I.icsEscape('a,b;c\\d\ne'), 'a\\,b\\;c\\\\d\\ne', 'TEXT values escape comma, semicolon, backslash and newline');
+      const longLine = 'SUMMARY:' + 'Çok uzun bir başlık, Türkçe karakterlerle: ğüşıöç '.repeat(4);
+      const folded = I.foldLine(longLine);
+      ok(folded.split('\r\n').every((l) => new TextEncoder().encode(l).length <= 75), 'long lines are folded at 75 octets');
+      eq(folded.split('\r\n').map((l, i) => (i ? l.slice(1) : l)).join(''), longLine, 'folding never splits a character and unfolds back to the original');
+      eq(I.localToUtc('2026-11-10', 13 * 60), '20261110T100000Z', '13:00 Turkey time is 10:00 UTC');
+      const ics = I.buildIcs({
+        name: 'Test',
+        dtstamp: new Date(Date.UTC(2026, 9, 23, 8, 0, 0)),
+        events: [
+          { uid: 'a@x', summary: 'Course registration (Spring)', date: '2027-01-26', endDate: '2027-01-29' },
+          { uid: 'b@x', summary: 'Midterm: ME 3320, room M113', location: 'M113', date: '2026-11-10', start: 13 * 60, end: 15 * 60 },
+          { uid: 'c@x', summary: 'Bad date', date: '2026-02-30' },
+        ],
+      });
+      eq(I.validateIcs(ics), [], 'the generated file is valid iCalendar (CRLF, folding, BEGIN/END, UID, DTSTAMP, DTSTART, SUMMARY)');
+      ok(ics.includes('DTSTART;VALUE=DATE:20270126\r\nDTEND;VALUE=DATE:20270130'), 'date ranges are all-day events with an exclusive end date');
+      ok(ics.includes('DTSTART:20261110T100000Z\r\nDTEND:20261110T120000Z'), 'timed events are written in UTC');
+      ok(ics.includes('SUMMARY:Midterm: ME 3320\\, room M113'), 'the summary is escaped');
+      ok(ics.includes('DTSTAMP:20261023T080000Z'), 'DTSTAMP is written');
+      ok(!ics.includes('Bad date'), 'an event with an invalid date is skipped, not written half-formed');
+      eq((ics.match(/BEGIN:VEVENT/g) || []).length, 2, 'two valid events');
+      const wk = I.weeklyClassEvents([
+        { key: 'ME3420-1-2-8', summary: 'ME 3420', location: 'M534', d: 2, fromMin: 8 * 60 + 40, toMin: 10 * 60 + 30 },
+        { key: 'ME3320-1-4-8', summary: 'ME 3320', location: 'M113', d: 4, fromMin: 8 * 60 + 40, toMin: 10 * 60 + 30 },
+      ], CLASS_TERM);
+      eq(wk.map((e) => [e.date, (e.exdates || []).join(','), e.weeklyUntil || '']), [['2026-09-23', '2026-10-28', '2026-12-25'], ['2026-11-07', '', ''], ['2026-09-25', '', '2026-12-25']], 'weekly classes: first Wednesday 23 Sep, no class 28 Oct, extra make-up on Sat 7 Nov; Friday class untouched');
+      const icsW = I.buildIcs({ events: wk, dtstamp: new Date(Date.UTC(2026, 9, 23)) });
+      eq(I.validateIcs(icsW), [], 'weekly class export is valid');
+      ok(icsW.includes('RRULE:FREQ=WEEKLY;UNTIL=20261225T205900Z') && icsW.includes('EXDATE:20261028T054000Z'), 'RRULE ends with the term and EXDATE matches the start time');
+      ok(I.validateIcs('BEGIN:VCALENDAR\nEND:VCALENDAR').length > 0, 'the validator rejects bare LF files');
+      ok(I.validateIcs('BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:x\r\nBEGIN:VEVENT\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n').some((p) => p.includes('UID')), 'the validator rejects events without UID');
+
+      // ------------------------------------------------------------------
+      group('OBS import (fictional sample paste)');
+      const imp = M.parseObsStatus(M.SAMPLE_PASTE, DATA);
+      eq(imp.counts, { rows: 21, passed: 16, failed: 3, inProgress: 1, notTaken: 1 }, 'rows are classified: 16 passed, 3 failed, 1 in progress, 1 not taken');
+      eq(imp.cgpa, 1.88, 'CGPA "Genel Not Ort 1,88" is read with a decimal comma');
+      eq(imp.credits, 88, '"Alınan Kredi 88" is read');
+      eq(imp.semesters, 3, 'three fall/spring terms with grades (summer is not counted)');
+      eq(imp.status.ENGR1115, 'passed', 'ENGR 1115 taken as SE 1115 with D: passed (D and above pass)');
+      eq([imp.status.PHYS1121, imp.status.CHEM1130, imp.status.PHYS1122], ['failed', 'failed', 'failed'], 'F, NA and W are not passed');
+      eq(imp.status.ME2210, 'passed', 'old-style DD counts as a pass');
+      eq(imp.status.ME2710, undefined, 'a course in progress (term, no grade) is not marked');
+      eq(imp.status.TURK1110, undefined, 'a row without a term is not taken');
+      eq([imp.status.ELECTMEA1, imp.status.ME4610], ['passed', 'passed'], 'elective slot A1 filled with ME 4610: slot and elective are both passed');
+      eq(imp.unknownCodes, ['XYZ 1000'], 'codes outside this curriculum are listed, not invented');
+      ok(Object.keys(imp.status).every((c) => COURSE_MAP[c]), 'only known codes get a status');
+      const one = M.parseObsStatus('ENGR 1115\nPROGRAMLAMAYA GİRİŞ\nZ\n5\n[22-23G]\nSE 1115\nPROGRAMLAMAYA GİRİŞ\n6\nFF\nMATH 1100\nMATEMATİKSEL MANTIK\nZ\n5\nGenel Not Ort 2,05', DATA);
+      eq([one.status.ENGR1115, one.counts.rows, one.counts.notTaken, one.cgpa], ['failed', 2, 1, 2.05], 'newline-separated cells: FF fails, row without term not taken, CGPA read');
+      const pipes = M.parseObsStatus('ENGR 1115 | PROGRAMLAMAYA GİRİŞ | Z | 5 | [22-23G] | SE 1115 | PROGRAMLAMAYA GİRİŞ | 6 | D', DATA);
+      eq(pipes.status, { ENGR1115: 'passed' }, 'the " | " separated format of the brief is parsed');
+      const spaced = M.parseObsStatus('MATH 1131 ANALİZ I Z 7 [22-23G] MATH 1131 ANALİZ I 7 B-', DATA);
+      eq(spaced.status, { MATH1131: 'passed' }, 'a row pasted as one space-separated line is parsed');
+      const retake = M.parseObsStatus('PHYS 1121\tFİZİK I\tZ\t7\t[22-23G]\tPHYS 1121\tFİZİK I\t7\tF\nPHYS 1121\tFİZİK I\tZ\t7\t[23-24G]\tPHYS 1121\tFİZİK I\t7\tC', DATA);
+      eq(retake.status.PHYS1121, 'passed', 'a failed course passed on a later attempt counts as passed');
+      eq([M.gradeResult('d'), M.gradeResult('D+'), M.gradeResult('U'), M.gradeResult('NA'), M.gradeResult('W'), M.gradeResult('x')], ['passed', 'passed', 'failed', 'failed', 'failed', null], 'grade results');
+      const empty = M.parseObsStatus('', DATA);
+      eq([empty.counts.rows, empty.cgpa, empty.semesters], [0, null, 0], 'an empty paste gives an empty preview, not an error');
+      eq(M.parseObsStatus('GANO 7,5', DATA).cgpa, null, 'a CGPA outside 0-4 is ignored');
+      eq(M.normCode('UNV ELECT ME1'), 'UNVELECTME1', 'slot codes match the app codes');
+
+      // ------------------------------------------------------------------
+      group('Catalogue');
+      eq(K.normalize('ANALİZ  II'), 'analiz ii', 'search is case- and accent-insensitive (Turkish İ)');
+      eq(K.normalize('Işık Şüğö'), 'isik sugo', 'Turkish letters fold to ASCII for search');
+      eq(K.unlocks('MATH2263', PREREQS).direct, ['EEE3718', 'ME3510', 'ME4230'], 'MATH 2263 directly unlocks EEE3718, ME3510, ME4230');
+      eq(K.unlocks('ME2210', PREREQS).all, ['ME2220', 'ME3220', 'ME3510', 'ME3410', 'ME4120', 'ME4410', 'ME4230'], 'ME 2210 unlocks a chain (transitively, breadth first)');
+      eq(K.unlocks('ME4910', PREREQS).all, ['ME4920'], 'ME 4910 unlocks ME 4920');
+      eq(K.unlocks('ENGR3450', PREREQS).all, [], 'a course nothing depends on unlocks nothing');
+      eq(K.requiresChain('ME4230', PREREQS, COURSE_MAP).map((x) => x.code), ['ME4230', 'MATH2263', 'MATH1131', 'ME3220', 'ME2210'].filter((c) => PREREQS[c]), 'ME 4230 needs MATH 2263 (needs MATH 1131) and ME 3220 (needs ME 2210)');
+      const fc = (f) => K.filterCourses(DATA, sample(), f).map((c) => c.code);
+      ok(fc({}).length === DATA.courses.filter((c) => c.kind !== 'slot').length, 'no filter: every course, elective slots left out');
+      eq(fc({ q: 'diferansiyel' }), ['MATH2263'], 'search by Turkish name (without accents)');
+      eq(fc({ q: 'thermo' }), ['ME2320'], 'search by English name');
+      eq(fc({ q: 'me 3220' }), ['ME3220'], 'search by spaced code');
+      eq(fc({ q: 'me3220' }), ['ME3220'], 'search by compact code');
+      ok(fc({ hidePassed: true }).every((c) => sample().status[c] !== 'passed'), 'hide passed');
+      ok(fc({ eligible: true, offered: true }).includes('ME3220') && !fc({ eligible: true }).includes('EEE3718'), 'eligible now: ME3220 yes, EEE3718 (needs MATH2263) no');
+      eq(fc({ sem: '5', type: 'compulsory' }), ['EEE3718', 'ENGR3450', 'ME3220', 'ME3320', 'ME3420'], 'semester 5 compulsory courses');
+      ok(fc({ type: 'elective' }).length === 22 && fc({ sem: 'pool' }).length === 22, 'elective filter and pool filter give the 22 pool courses');
+      ok(!fc({ offered: true }).includes('ME3410') && fc({ offered: true }).includes('SOFL1101'), 'offered this term: ME3410 no; SOFL1101 yes (sections not loaded)');
+
+      // ------------------------------------------------------------------
+      group('Registration-day plan (alternatives, Plan B/C)');
+      const rpS = E.registrationPlan(sample(), DATA);
+      const codesS = E.composeSelection(rpS);
+      const pa = P.planA(codesS, {}, DATA, E.DEFAULT_PREFS);
+      ok(pa.ok && Object.keys(pa.sections).length === 5 && pa.source === 'filled', 'Plan A is completed by the exact search when no section is chosen');
+      eq(E.chosenClashes(E.chosenSections(pa.sections, DATA)), [], 'Plan A has no clash');
+      const pa2 = P.planA(codesS, { MATH2263: 3, ENGR3450: 4, ME3320: 1 }, DATA, E.DEFAULT_PREFS);
+      eq([pa2.sections.MATH2263, pa2.sections.ENGR3450, pa2.sections.ME3320, pa2.source], [3, 4, 1, 'picks'], 'chosen sections are kept in Plan A');
+      const pa3 = P.planA(codesS, { MATH2263: 2 }, DATA, E.DEFAULT_PREFS);
+      eq(pa3.source, 'search', 'chosen sections that clash: Plan A falls back to the best plan');
+      const A0 = { MATH2263: 3, ENGR3450: 4, ME3220: 1, ME3320: 1, ME3420: 1 };
+      eq(E.chosenClashes(E.chosenSections(A0, DATA)), [], 'the Plan A used below is clash-free');
+      const alt = (code, full = {}) => P.alternatives(code, A0, DATA, full).map((x) => x.no);
+      eq(alt('ENGR3450'), [3, 2, 1].filter((no) => !E.masksOverlap(E.maskOf(sec('ENGR3450', no).slots), E.maskOf(['MATH2263', 'ME3220', 'ME3320', 'ME3420'].flatMap((c) => sec(c, A0[c]).slots)))), 'ENGR3450 alternatives = the other sections that fit the rest of Plan A, same times first, then larger rooms');
+      eq(P.alternatives('ENGR3450', A0, DATA, {})[0].sameTime, true, 'section 3 of ENGR3450 has the same times as section 4 and is offered first');
+      eq(alt('ME3220'), [], 'ME3220 has a single section: no alternative');
+      eq(alt('ENGR3450', { ENGR3450: [3] }).includes(3), false, 'a section marked full is never suggested');
+      const brute2 = (code, full) => DATA.sectionsByCourse[code].filter((s) => s.no !== A0[code] && !P.isFull(full, code, s.no) && Object.keys(A0).filter((c) => c !== code).every((c) => !E.sectionsOverlap(s, sec(c, A0[c])))).map((s) => s.no).sort();
+      ok(Object.keys(A0).every((c) => JSON.stringify(alt(c).slice().sort()) === JSON.stringify(brute2(c, {}))), 'alternatives match a brute-force check for every course');
+      const order = P.entryOrder(A0, DATA, {});
+      ok(order.every((x, i) => i === 0 || order[i - 1].alternatives.length < x.alternatives.length || (order[i - 1].alternatives.length === x.alternatives.length && order[i - 1].cap <= x.cap)), 'entry order: fewest alternatives first, then smallest room');
+      eq(order.filter((x) => x.alternatives.length === 0).map((x) => x.code).sort(), ['ME3220', 'ME3420'].concat(order.filter((x) => x.alternatives.length === 0 && !['ME3220', 'ME3420'].includes(x.code)).map((x) => x.code)).sort(), 'single-section courses come first (no alternative)');
+      const rep = P.repairPlan(codesS, A0, DATA, { MATH2263: [3] }, E.DEFAULT_PREFS);
+      ok(rep.ok && rep.sections.MATH2263 !== 3 && E.chosenClashes(E.chosenSections(rep.sections, DATA)).length === 0, 'repair: MATH2263(3) full -> a clash-free plan without it');
+      ok(rep.changed.includes('MATH2263'), 'repair reports what changed');
+      eq(P.repairPlan(codesS, A0, DATA, { ME3220: [1] }).blocked, ['ME3220'], 'every section of ME3220 full: the course is reported as blocked');
+      const bk = P.backupPlans(codesS, A0, DATA, {}, E.DEFAULT_PREFS, 2);
+      eq(bk.total, 4, 'the exact search behind Plan B/C counts the same 4 timetables');
+      ok(bk.plans.length === 2 && bk.plans.every((p) => p.changed.length > 0 && E.chosenClashes(E.chosenSections(p.sections, DATA)).length === 0), 'Plan B and Plan C differ from Plan A and are clash-free');
+      ok(JSON.stringify(bk.plans[0].sections) !== JSON.stringify(bk.plans[1].sections), 'Plan B and Plan C differ from each other');
+      const bkFull = P.backupPlans(codesS, A0, DATA, { MATH2263: [1, 3] }, E.DEFAULT_PREFS, 2);
+      ok(bkFull.plans.every((p) => ![1, 3].includes(p.sections.MATH2263)), 'Plan B/C never use a section marked full');
+      eq(P.exhausted(['ME3220', 'MATH2263'], DATA, { ME3220: [1] }), ['ME3220'], 'exhausted lists courses with every section full');
+
+      // ------------------------------------------------------------------
+      group('Graduation roadmap and CGPA projection');
+      eq([R.termOf(0), R.termOf(1), R.termOf(3)].map((x) => `${x.season} ${x.y1}-${x.y2}`), ['fall 2026-2027', 'spring 2026-2027', 'spring 2027-2028'], 'terms alternate fall / spring from Fall 2026-27');
+      const road = R.earliestPlan(sample(), DATA, { gp: G.GP['C+'] });
+      eq(road.remainingEcts, 128, 'sample student: 128 ECTS left (MATH2263 7 + UFND7010 1 + semesters 5-8)');
+      eq(road.terms.length, 4, 'sample student: 4 terms');
+      eq(road.graduation && `${road.graduation.season} ${road.graduation.y1}`, 'spring 2027', 'earliest graduation: Spring 2027-28');
+      ok(road.proven && road.lowerBound === 4, 'the plan meets the lower bound (128 ECTS / 40), so it is provably the earliest under the assumptions');
+      eq(road.unscheduled, [], 'everything gets scheduled');
+      ok(road.terms[0].codes[0] === 'MATH2263', 'the retake comes first in the first term');
+      const termOfCode = (c) => road.terms.findIndex((tm) => tm.codes.includes(c));
+      ok(termOfCode('EEE3718') > termOfCode('MATH2263'), 'EEE3718 is planned after MATH2263 is passed (earlier term)');
+      ok(termOfCode('ME4920') > termOfCode('ME4910'), 'ME4920 comes after ME4910');
+      ok(road.terms.every((tm) => tm.ects <= tm.limit), 'no term goes over its ECTS limit');
+      ok(road.terms.every((tm) => tm.codes.every((c) => R.offeredIn(R.remainingUnits(sample(), DATA).find((u) => u.code === c), tm.k, DATA))), 'every course is planned in a term in which it is offered');
+      const allPlanned = road.terms.flatMap((tm) => tm.codes);
+      eq(allPlanned.length, new Set(allPlanned).size, 'no course is planned twice');
+      eq(road.terms.reduce((n, tm) => n + tm.ects, 0), 128, 'all remaining ECTS are planned');
+      ok(road.terms.every((tm) => U.isNum(tm.cgpaAfter)), 'the projected CGPA is a number in every term');
+      const low3 = sample();
+      low3.cgpa = 1.6;
+      const roadLow = R.earliestPlan(low3, DATA, { gp: G.GP.D });
+      ok(roadLow.terms[0].limit === 32 && roadLow.terms[0].ects <= 32, 'CGPA 1.60: first term limited to 32 ECTS');
+      const roadUnknown = R.earliestPlan({ ...sample(), cgpa: null }, DATA, { gp: G.GP.B });
+      ok(roadUnknown.terms.every((tm) => tm.cgpaAfter === null && tm.limit === 32), 'no CGPA entered: no projection (not NaN), limit 32');
+      const done = R.earliestPlan({ status: Object.fromEntries(DATA.semesters.flatMap((s) => s.courses.map((c) => [c.code, 'passed']))), cgpa: 3 }, DATA, {});
+      ok(done.alreadyDone && done.terms.length === 0 && done.graduation === null, 'a student with everything passed has nothing left to plan');
+      const fresh0 = R.earliestPlan(emptyProfile(), DATA, {});
+      ok(fresh0.graduation && fresh0.terms.length >= 8, `a new student needs at least 8 terms (${fresh0.terms.length})`);
+      eq(R.gradedEcts(sample(), DATA), 119, 'sample student has 119 graded ECTS (semesters 1-4 without UFND7010)');
+      eq(U.round(R.cgpaAfter({ cgpa: 2, base: 100, termEcts: 30, retakeEcts: 0, gp: 3 }), 4), U.round(290 / 130, 4), 'CGPA after a term: (2×100 + 3×30) / 130');
+      eq(U.round(R.cgpaAfter({ cgpa: 1.8, base: 100, termEcts: 30, retakeEcts: 6, gp: 2 }), 4), U.round(240 / 124, 4), 'a retake replaces the F without adding credits');
+      eq(R.cgpaAfter({ cgpa: null, base: 100, termEcts: 30, retakeEcts: 0, gp: 3 }), null, 'unknown CGPA gives null, not NaN');
+      const need = R.averageNeeded({ cgpa: 1.8, base: 100, termEcts: 30, retakeEcts: 0, target: 2 });
+      eq([need.need, need.state], [2.67, 'reachable'], 'CGPA 1.80 over 100 ECTS: a 30-ECTS term average of 2.67 lifts it to 2.00');
+      eq(R.letterAtLeast(2.67), 'B-', '2.67 means at least B- (2.70)');
+      eq(R.averageNeeded({ cgpa: 1.0, base: 200, termEcts: 20, retakeEcts: 0 }).state, 'impossible', 'a target out of reach in one term says so');
+      eq(R.averageNeeded({ cgpa: 3.0, base: 100, termEcts: 30, retakeEcts: 0 }).state, 'already', 'well above 2.00: any average keeps it');
+      eq(R.averageNeeded({ cgpa: NaN, base: 100, termEcts: 30, retakeEcts: 0 }).state, 'unknown', 'NaN CGPA: unknown, not NaN');
+      eq(R.averageNeeded({ cgpa: 2, base: 100, termEcts: 0, retakeEcts: 0 }).state, 'unknown', 'no ECTS planned: unknown, not a division by zero');
+
+      // ------------------------------------------------------------------
+      group('Interface texts (new pages)');
+      const newPrefixes = ['nav.catalogue', 'nav.regday', 'nav.attendance', 'nav.grades', 'nav.calendar', 'nav.roadmap', 'nav.import', 'nav.compare'];
+      ok(newPrefixes.every((k) => STR.en[k] && STR.tr[k]), 'every new page has a menu label in both languages');
+      ok(Object.values(STR.en).concat(Object.values(STR.tr)).every((s) => typeof s === 'string' && !U.hasBadText(s)), 'no interface text contains NaN / undefined');
+      ok(Object.keys(STR.en).every((k) => (STR.en[k].match(/\{\w+\}/g) || []).sort().join() === (STR.tr[k].match(/\{\w+\}/g) || []).sort().join()), 'English and Turkish texts use the same {placeholders}', Object.keys(STR.en).filter((k) => (STR.en[k].match(/\{\w+\}/g) || []).sort().join() !== (STR.tr[k].match(/\{\w+\}/g) || []).sort().join()).join(','));
     } catch (err) {
       results.push({ section: 'Runtime', name: 'tests threw: ' + (err && err.stack ? err.stack : err), pass: false });
+    }
+
+    // ------------------------------------------------------------------
+    // Integration: the real app in a 375 px wide iframe. Every page in English and Turkish
+    // must render, contain no NaN / undefined, and not scroll horizontally. The stored
+    // state of this browser is backed up first and restored afterwards.
+    if (typeof document !== 'undefined' && !new URLSearchParams(location.search).has('unit')) {
+      const KEY = 'kayit-pilotu:v5';
+      const ENT = 'kayit-pilotu:entered';
+      let backup = null;
+      let entBackup = null;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      try {
+        backup = localStorage.getItem(KEY);
+        entBackup = sessionStorage.getItem(ENT);
+        localStorage.removeItem(KEY);
+        sessionStorage.removeItem(ENT);
+      } catch (e) { /* storage unavailable */ }
+      const fr = document.createElement('iframe');
+      fr.title = 'App smoke test';
+      fr.style.cssText = 'width:375px;height:640px;border:1px solid #888;display:block;margin-top:16px';
+      try {
+        group('Whole app in a 375 px iframe (every page, EN and TR)');
+        const loaded = new Promise((r) => { fr.onload = r; });
+        fr.src = 'index.html?today=2026-10-23';
+        document.body.appendChild(fr);
+        await loaded;
+        await sleep(400);
+        const w = fr.contentWindow;
+        const doc = fr.contentDocument;
+        const errors = [];
+        w.addEventListener('error', (e) => errors.push(String(e.message)));
+        ok(!doc.getElementById('entry').hidden, 'the app opens on the entry screen (no credentials asked)');
+        ok(doc.querySelector('[data-testid="entry-import"]'), 'the entry screen offers "Import my OBS data"');
+        doc.querySelector('[data-testid="entry-login"]').click();
+        await sleep(200);
+        const views = ['home', 'catalogue', 'register', 'timetable', 'regday', 'attendance', 'grades', 'calendar', 'roadmap', 'status', 'import', 'compare', 'rules'];
+        for (const lang of ['en', 'tr']) {
+          doc.querySelector(`[data-testid="lang-${lang}"]`).click();
+          await sleep(150);
+          const bad = [];
+          const wide = [];
+          const wrong = [];
+          for (const v of views) {
+            w.location.hash = '#' + v;
+            await sleep(220);
+            const main = doc.getElementById('main');
+            if (main.dataset.view !== v) wrong.push(v);
+            const text = main.innerText + ' ' + doc.getElementById('nav').innerText + ' ' + doc.title;
+            if (U.hasBadText(text)) bad.push(v + ': ' + (text.match(/.{0,25}(NaN|undefined|\[object Object\]|Infinity|\bnull\b).{0,25}/) || [''])[0]);
+            if (doc.documentElement.scrollWidth > w.innerWidth + 1) wide.push(`${v} (${doc.documentElement.scrollWidth}px)`);
+          }
+          eq(wrong, [], `${lang.toUpperCase()}: every page renders`);
+          eq(bad, [], `${lang.toUpperCase()}: no NaN / undefined / null on any page`);
+          eq(wide, [], `${lang.toUpperCase()}: no horizontal page scroll at 375 px on any page`);
+        }
+        doc.querySelector('[data-testid="lang-en"]').click();
+        const st = w.kpDemo.state();
+        eq([st.selected.length, st.today, st.lang], [5, '2026-10-23', 'en'], 'kpDemo.state() works: 5 courses, ?today honoured');
+        eq(I.validateIcs(w.kpDemo.icsText()), [], 'the calendar page exports a valid .ics file');
+        w.location.hash = '#home';
+        await sleep(200);
+        ok(doc.querySelectorAll('[data-testid^="attention-item-"]').length >= 3, 'dashboard "Needs your attention" is filled from real state');
+        ok(doc.querySelector('[data-testid="attention-item-retake"]') && doc.querySelector('[data-testid="attention-item-cal-hol-republic"]'), 'it lists the retake and the Republic Day break (5 days after 23 Oct)');
+        eq(doc.querySelector('[data-testid="dash-graduation"]').textContent, 'Spring 2027-28', 'dashboard shows the earliest graduation');
+        w.location.hash = '#grades';
+        await sleep(200);
+        ok(doc.querySelector('[data-testid="grade-need-ME3320"]') && doc.querySelector('[data-testid="grades-demo-tag"]'), 'grades page shows final targets and labels the demo values');
+        w.location.hash = '#attendance';
+        await sleep(200);
+        eq(doc.querySelector('[data-testid="att-badge-ME3420"]').dataset.state, 'last', 'attendance: ME3420 practice 5 of 5.6 h is "at the limit" (demo data)');
+        ok(doc.querySelector('[data-testid="attendance-demo-tag"]'), 'attendance labels the demo values');
+        eq(errors, [], 'no script errors while visiting every page');
+      } catch (err) {
+        results.push({ section: 'Runtime', name: 'integration threw: ' + (err && err.stack ? err.stack : err), pass: false });
+      } finally {
+        fr.remove();
+        try {
+          if (backup === null) localStorage.removeItem(KEY);
+          else localStorage.setItem(KEY, backup);
+          if (entBackup === null) sessionStorage.removeItem(ENT);
+          else sessionStorage.setItem(ENT, entBackup);
+        } catch (e) { /* ignore */ }
+      }
     }
 
     const failed = results.filter((r) => !r.pass).length;

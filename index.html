@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Kayıt Pilotu: an unofficial pre-registration planner that lets you plan your course registration before it opens.">
+  <meta name="description" content="Kayıt Pilotu: an unofficial student assistant for course registration, attendance, grades, exam dates and the road to graduation.">
   <title>Kayıt Pilotu</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
@@ -17,8 +17,10 @@
       </div>
       <span class="mark-kp mark-lg" aria-hidden="true">KP</span>
       <h1 id="entry-title" class="entry-title">Kayıt Pilotu</h1>
-      <p class="entry-sub" id="entry-sub">Course registration planner for Yaşar University Mechanical Engineering students — unofficial student project</p>
+      <p class="entry-sub" id="entry-sub">Course registration and term assistant for Yaşar University Mechanical Engineering students — unofficial student project</p>
       <button type="button" class="btn btn-primary entry-btn" id="entry-login" data-act="enter" data-testid="entry-login">Log in as Demo Student</button>
+      <p class="entry-or small muted" id="entry-or">or</p>
+      <button type="button" class="btn entry-btn entry-btn-2" id="entry-import" data-act="enter-import" data-testid="entry-import">Import my OBS data</button>
       <p class="entry-note small muted" id="entry-note">No account or password needed. Nothing you do here is sent anywhere.</p>
     </div>
   </section>
@@ -59,6 +61,7 @@
 
   <dialog id="dlg-suggest" class="dlg dlg-wide" aria-labelledby="sg-title" data-testid="suggest-modal"><div class="dlg-inner" id="sg-inner"></div></dialog>
   <dialog id="dlg-summary" class="dlg" aria-labelledby="sm-title" data-testid="summary-modal"><div class="dlg-inner" id="sm-inner"></div></dialog>
+  <dialog id="dlg-course" class="dlg dlg-drawer" aria-labelledby="cd-title" data-testid="course-drawer"><div class="dlg-inner" id="cd-inner"></div></dialog>
 
   <div id="print-area" class="print-area" aria-hidden="true"></div>
   <div id="demo-caption" class="demo-caption" popover="manual" data-testid="demo-caption" aria-hidden="true" aria-live="polite"></div>
