@@ -219,6 +219,11 @@ function walk(items, onLeaf, countLimit) {
   return { total, stopped };
 }
 
+/** Visit every conflict-free plan (onLeaf gets a reused array of option indexes). */
+export function eachPlan(items, onLeaf, countLimit = 5000000) {
+  return walk(items, onLeaf, countLimit);
+}
+
 /** All conflict-free plans (up to `limit` stored). */
 export function enumeratePlans(items, { limit = 100000, countLimit = 5000000 } = {}) {
   const plans = [];

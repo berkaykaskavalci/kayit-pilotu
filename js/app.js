@@ -2,11 +2,18 @@
 import { DATA, META, RULES, OBSERVED, SAMPLE, DEMO_STUDENT } from './data.js';
 import * as E from './engine.js';
 import { STR } from './i18n.js';
+import * as PG from './pages.js';
+import * as G from './grades.js';
+import * as A from './attendance.js';
+import * as CAL from './calendar.js';
+import * as U from './util.js';
+import { EXTRA_META } from './data-extra.js';
 
-const STORE_KEY = 'kayit-pilotu:v4';
-const OLD_KEY = 'kayit-pilotu:v1';
+const STORE_KEY = 'kayit-pilotu:v5'; // v5: fresh sample student for everyone (attendance, grades, exams added)
 const ENTER_KEY = 'kayit-pilotu:entered';
-const VIEWS = ['home', 'register', 'timetable', 'status', 'rules'];
+const VIEWS = ['home', 'catalogue', 'register', 'timetable', 'regday', 'attendance', 'grades', 'calendar', 'roadmap', 'status', 'import', 'compare', 'rules'];
+const DIALOGS = ['dlg-suggest', 'dlg-summary', 'dlg-course'];
+const TODAY = CAL.resolveToday(location.search);
 const LEGACY = { courses: 'register', schedule: 'register', check: 'register' };
 // Ordered so that the first few hues are far apart on the colour wheel.
 // Reds are left out: red is reserved for clashes.
@@ -31,8 +38,30 @@ function fresh() {
     reg: 'draft', // 'draft' | 'pending' (simulated "sent to advisor")
     sentAt: null,
     openElectives: false,
+    att: {}, // used absence hours per course: { CODE: { t, p } }
+    grades: {}, // entered scores: { CODE: { itemIndex: [scores] } }
+    thresholds: { ...G.DEFAULT_THRESHOLDS }, // example letter thresholds (editable)
+    exams: [], // exam dates entered by the student
+    full: {}, // registration-day simulation: sections marked full { CODE: [nos] }
+    regAt: '', // registration date-time chosen by the student (datetime-local)
+    expLetter: 'C+', // expected average letter for the roadmap
+    icsOpts: { official: true, exams: true, classes: true },
+    calPast: false,
+    demo: { att: false, grades: false }, // true while the values are the fictional demo values
+    imported: null, // { at } after an OBS import
   };
 }
+
+// FICTIONAL demo values for the demo student: attendance and scores are made up and the
+// pages label them "Demo data". No exam dates are invented.
+const DEMO_ATT = { MATH2263: { t: 9, p: 3 }, ENGR3450: { t: 3, p: 0 }, ME3220: { t: 7, p: 2 }, ME3320: { t: 4, p: 1 }, ME3420: { t: 2, p: 5 } };
+const DEMO_GRADES = {
+  MATH2263: { 0: [58], 1: [70, 65], 2: [82] },
+  ME3220: { 0: [72] },
+  ME3320: { 0: [64], 1: [80, 75], 2: [90] },
+  ME3420: { 0: [55], 1: [60, 70], 2: [75] },
+  ENGR3450: { 0: [81], 1: [90, 85], 2: [88, 92] },
+};
 
 function clearRegistration(s) {
   s.added = [];
@@ -46,7 +75,56 @@ function withSample(s) {
   s.profile = JSON.parse(JSON.stringify(SAMPLE.profile));
   s.hasProfile = true;
   clearRegistration(s);
+  s.att = JSON.parse(JSON.stringify(DEMO_ATT));
+  s.grades = JSON.parse(JSON.stringify(DEMO_GRADES));
+  s.demo = { att: true, grades: true };
+  s.full = {};
+  s.imported = null;
   return s;
+}
+
+// --- cleaning of stored values (anything malformed is dropped, never shown as NaN) ---
+function cleanAtt(x) {
+  const out = {};
+  for (const [code, v] of Object.entries(obj(x))) {
+    if (!DATA.courseMap[code]) continue;
+    out[code] = { t: A.cleanUsed(obj(v).t), p: A.cleanUsed(obj(v).p) };
+  }
+  return out;
+}
+function cleanGrades(x) {
+  const out = {};
+  for (const [code, v] of Object.entries(obj(x))) {
+    if (!G.ASSESSMENTS[code]) continue;
+    out[code] = {};
+    for (const [i, list] of Object.entries(obj(v))) {
+      if (!Array.isArray(list)) continue;
+      out[code][i] = list.slice(0, 20).map((n) => (G.validScore(n) ? n : null));
+    }
+  }
+  return out;
+}
+function cleanExams(x) {
+  return (Array.isArray(x) ? x : [])
+    .filter((e) => e && typeof e.id === 'string' && DATA.courseMap[e.code] && CAL.isIso(e.date))
+    .map((e) => ({
+      id: e.id.slice(0, 40),
+      code: e.code,
+      kind: ['midterm', 'quiz', 'final', 'makeup', 'other'].includes(e.kind) ? e.kind : 'other',
+      date: e.date,
+      start: CAL.parseTime(e.start) === null ? '' : e.start,
+      end: CAL.parseTime(e.end) === null ? '' : e.end,
+      room: typeof e.room === 'string' ? e.room.slice(0, 40) : '',
+    }));
+}
+function cleanFull(x) {
+  const out = {};
+  for (const [code, list] of Object.entries(obj(x))) {
+    if (!Array.isArray(list)) continue;
+    const nos = list.filter((n) => Number.isInteger(n));
+    if (nos.length && DATA.sectionsByCourse[code]) out[code] = nos;
+  }
+  return out;
 }
 
 const arr = (x) => (Array.isArray(x) ? x.filter((c) => typeof c === 'string') : []);
@@ -73,28 +151,25 @@ function load() {
         picks: obj(s.picks),
         reg: s.reg === 'pending' ? 'pending' : 'draft',
         lang: s.lang === 'tr' ? 'tr' : 'en',
+        att: cleanAtt(s.att),
+        grades: cleanGrades(s.grades),
+        thresholds: G.validThresholds(s.thresholds) ? { ...s.thresholds } : { ...G.DEFAULT_THRESHOLDS },
+        exams: cleanExams(s.exams),
+        full: cleanFull(s.full),
+        regAt: CAL.parseLocalDateTime(s.regAt) ? s.regAt : '',
+        expLetter: PG.LETTER_CHOICES.includes(s.expLetter) ? s.expLetter : base.expLetter,
+        icsOpts: { ...base.icsOpts, ...obj(s.icsOpts) },
+        calPast: s.calPast === true,
+        demo: { att: obj(s.demo).att === true, grades: obj(s.demo).grades === true },
+        imported: s.imported && typeof s.imported.at === 'string' ? { at: s.imported.at } : null,
       };
     } catch (e) {
       /* fall through to a fresh start */
     }
   }
-  // First visit: keep a profile entered in the previous version, otherwise load the
-  // fictional sample student so the whole flow can be seen at once.
-  let old = null;
-  try {
-    old = JSON.parse(localStorage.getItem(OLD_KEY) || 'null');
-  } catch (e) {
-    old = null;
-  }
-  const oldProfile = obj(old && old.profile);
-  const oldHasData = Object.keys(obj(oldProfile.status)).length > 0 || typeof oldProfile.cgpa === 'number';
-  if (old && old.hasProfile && oldHasData) {
-    base.profile = { ...base.profile, ...obj(old.profile), status: { ...obj(obj(old.profile).status) } };
-    base.hasProfile = true;
-  } else {
-    withSample(base);
-  }
-  if (old && old.lang === 'en') base.lang = 'en';
+  // First visit (or first visit since v5): the fictional sample student, so the whole
+  // flow can be seen at once.
+  withSample(base);
   return base;
 }
 
@@ -122,7 +197,7 @@ function setEntered(v) {
     /* ignore */
   }
 }
-const ui = { focus: null, navOpen: false, sg: null, sent: false, openers: {} };
+const ui = { focus: null, navOpen: false, sg: null, sent: false, openers: {}, cat: { ...PG.CAT_DEFAULT }, imp: null, impText: '', impDone: null, courseDlg: null, openTh: false, examErr: null };
 
 function viewFromHash() {
   const h = location.hash.slice(1);
@@ -156,7 +231,7 @@ const program = () => (state.lang === 'tr' ? META.programTr : META.program);
 const fmtRange = (r) => `${t('day.' + r.d)} ${E.slotStart(r.from)}–${E.slotEnd(r.to)}`;
 const times = (slots) => E.mergeSlots(slots).map(fmtRange).join(', ');
 const codeList = (codes) => codes.map(lbl).join(', ');
-const fmt2 = (n) => (state.lang === 'tr' ? n.toFixed(2).replace('.', ',') : n.toFixed(2));
+const fmt2 = (n) => U.fmtNum(n, { digits: 2, lang: state.lang });
 const initials = (name) => name.split(/\s+/).map((w) => w.charAt(0)).join('').slice(0, 2).toLocaleUpperCase('tr');
 const sectionOf = (code, no) => (DATA.sectionsByCourse[code] || []).find((s) => s.no === no);
 const ta = (s) => esc(s); // attribute-safe text
@@ -219,8 +294,79 @@ const P = {
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
   target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  userCheck: '<circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0"/><path d="M16 4.5h6M16 8h6M18 11.5h4"/>',
+  calc: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/>',
+  event: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><rect x="13" y="13" width="4" height="4" rx="0.5"/>',
+  flag: '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>',
+  upload: '<path d="M12 16V4M7 9l5-5 5 5M5 20h14"/>',
+  scale: '<path d="M12 4v16M7 20h10"/><path d="M5 8h14"/><path d="m5 8-3 6a3 3 0 0 0 6 0zM19 8l-3 6a3 3 0 0 0 6 0z"/>',
+  bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+  flask: '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3"/><path d="M7.5 15h9"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3"/>',
+  list: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/>',
+  ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
+  refresh: '<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 3v5h5"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 21v-5h-5"/>',
+  wifiOff: '<path d="M3 3l18 18"/><path d="M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 5-2.7M14.5 10.4A10 10 0 0 1 19 13M2 9.5a15 15 0 0 1 4.5-2.8M11 6a15 15 0 0 1 11 3.5"/><path d="M12 20h.01"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  chart: '<path d="M4 20V4M4 20h16"/><path d="m7 15 4-5 3 3 5-6"/>',
+  star: '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1 6.2-5.5-2.9-5.5 2.9 1-6.2L3 9.6l6.2-.9z"/>',
 };
 const ic = (name, cls = '') => `<svg class="ic${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${P[name]}</svg>`;
+
+const locale = () => (state.lang === 'tr' ? 'tr-TR' : 'en-GB');
+const num = (x, digits = 0) => U.fmtNum(x, { digits, lang: state.lang });
+
+/** "23 Oct 2026" (or with weekday). Calendar dates are formatted in UTC so they never shift. */
+function fmtDate(iso, withWeekday = false) {
+  const p = CAL.parseIso(iso);
+  if (!p) return '—';
+  const o = { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' };
+  if (withWeekday) o.weekday = 'short';
+  return new Date(Date.UTC(p.y, p.m - 1, p.d)).toLocaleDateString(locale(), o);
+}
+
+/** Term label: "Fall 2026-27" / "2026-27 Güz"; short form for chart axes. */
+function termLabel(tm, short = false) {
+  const yy = (y) => String(y).slice(2);
+  const tr = state.lang === 'tr';
+  const season = t('season.' + tm.season);
+  if (short) return `${season} '${yy(tm.season === 'fall' ? tm.y1 : tm.y2)}`;
+  return tr ? `${tm.y1}-${yy(tm.y2)} ${season}` : `${season} ${tm.y1}-${yy(tm.y2)}`;
+}
+
+const isSampleProfile = () => JSON.stringify(state.profile) === JSON.stringify(SAMPLE.profile);
+
+function downloadText(filename, mime, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: mime }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/** Replace the profile with an OBS import (registration, demo attendance and demo grades are cleared). */
+function applyImport(imp) {
+  const p = state.profile;
+  state.profile = {
+    status: { ...imp.status },
+    cgpa: U.isNum(imp.cgpa) ? imp.cgpa : p.cgpa,
+    semestersCompleted: imp.semesters > 0 ? imp.semesters : p.semestersCompleted,
+    graduating: p.graduating,
+  };
+  state.hasProfile = true;
+  clearRegistration(state);
+  state.att = {};
+  state.grades = {};
+  state.demo = { att: false, grades: false };
+  state.full = {};
+  state.imported = { at: new Date().toISOString() };
+  ui.focus = null;
+}
 
 // ---------------------------------------------------------------------------
 // Derived data
@@ -254,6 +400,8 @@ function renderChrome(d) {
   $('#entry-sub').textContent = t('entry.sub');
   $('#entry-login').textContent = t('entry.login');
   $('#entry-note').textContent = t('entry.note');
+  $('#entry-import').textContent = t('entry.import');
+  $('#entry-or').textContent = t('entry.or');
   $('#entry .lang').setAttribute('aria-label', t('lang.label'));
   $('#logout').textContent = t('top.logout');
   $('#skip').textContent = t('skip');
@@ -276,12 +424,19 @@ function renderChrome(d) {
   const link = (v, icon, extra = '') =>
     `<a href="#${v}" class="nav-a" data-testid="nav-${v}"${v === view ? ' aria-current="page"' : ''}>${ic(icon)}<span class="nav-t">${t('nav.' + v)}</span>${extra}</a>`;
   const regBadge = `<span class="nav-badge nav-badge-${state.reg}">${t('regShort.' + state.reg)}</span>`;
+  const group = (key, links) => `<li class="nav-group"><span class="nav-group-t">${t(key)}</span><ul>${links.map((l) => `<li>${l}</li>`).join('')}</ul></li>`;
+  const absWarn = d.selected.some((c) => {
+    const lim = course(c).tul ? A.attendanceLimits(course(c).tul) : null;
+    const u = state.att[c] || {};
+    return lim && ['last', 'over'].includes(A.worstState(A.attendanceStatus(A.cleanUsed(u.t), lim.theoryAllowed).state, A.attendanceStatus(A.cleanUsed(u.p), lim.practiceAllowed).state));
+  });
+  const dot = (on, label) => (on ? `<span class="nav-dot" title="${ta(label)}"><span class="sr">${esc(label)}</span></span>` : '');
   $('#nav').innerHTML = `<p class="side-term">${esc(term())}</p><ul class="nav">
     <li>${link('home', 'home')}</li>
-    <li class="nav-group"><span class="nav-group-t">${ic('folder')}<span>${t('nav.group')}</span></span>
-      <ul><li>${link('register', 'book', regBadge)}</li><li>${link('timetable', 'calendar')}</li></ul></li>
-    <li>${link('status', 'user')}</li>
-    <li>${link('rules', 'info')}</li>
+    ${group('nav.group', [link('catalogue', 'search'), link('register', 'book', regBadge), link('timetable', 'calendar'), link('regday', 'clock')])}
+    ${group('nav.gTerm', [link('attendance', 'userCheck', dot(absWarn, t('nav.absWarn'))), link('grades', 'calc'), link('calendar', 'event')])}
+    ${group('nav.gGrad', [link('roadmap', 'flag'), link('status', 'user'), link('import', 'upload')])}
+    ${group('nav.gAbout', [link('compare', 'scale'), link('rules', 'info')])}
   </ul><p class="side-note">${t('side.note')}</p>`;
   $('#foot').innerHTML = `<p>${t('foot.disclaimer')} <a href="#rules">${t('nav.rules')}</a> · ${t('foot.data', { date: META.collected })}</p>`;
   renderPrintArea(d);
@@ -481,13 +636,10 @@ function viewHome(d) {
   const passedEcts = DATA.semesters.reduce((n, s) => n + s.courses.reduce((m, c) => m + (st[c.code] === 'passed' ? c.ects : 0), 0), 0);
   const sem = E.currentSemester(p);
   const first = DEMO_STUDENT.name.split(' ')[0];
+  const pct = U.ratio(passedEcts, TOTAL_ECTS) || 0;
   let h = `<header class="page-head"><p class="crumb">${t('view.home')}</p>
     <h1 id="view-title" tabindex="-1">${t('home.hello', { name: esc(first) })}</h1>
     <p class="lead">${t('home.lead', { term: esc(term()) })}</p></header>`;
-
-  if (d.plan.locked.length) {
-    h += `<div class="notice notice-warn" role="note">${ic('alert')}<p>${t('home.retake', { codes: esc(codeList(d.plan.locked)) })}</p></div>`;
-  }
 
   h += `<div class="dash">`;
   // Student
@@ -497,30 +649,35 @@ function viewHome(d) {
     <dl class="kv"><div><dt>${t('home.number')}</dt><dd>${esc(DEMO_STUDENT.number)}</dd></div>
     <div><dt>${t('home.program')}</dt><dd>${esc(program())}</dd></div>
     <div><dt>${t('home.semester')}</dt><dd>${t('semN', { n: sem })}</dd></div></dl>
+    ${state.imported ? `<p class="small muted">${ic('upload')} ${t('home.imported', { date: fmtDate(state.imported.at.slice(0, 10)) })}</p>` : ''}
     <a class="btn btn-small" href="#status" data-testid="edit-profile">${ic('edit')}${t('home.editProfile')}</a></section>`;
   // CGPA and limit
   h += `<section class="card dcard" data-testid="card-gpa" aria-labelledby="c-gpa"><h2 id="c-gpa" class="dcard-t">${ic('gauge')}${t('home.gpa')}</h2>
-    <p class="metric">${p.cgpa === null || p.cgpa === undefined ? '—' : fmt2(p.cgpa)}</p>
+    <p class="metric${U.isNum(p.cgpa) && p.cgpa < 2 ? ' txt-warn' : ''}">${U.isNum(p.cgpa) ? fmt2(p.cgpa) : '—'}</p>
     <p>${t('home.maxEcts', { max: d.limits.max })} <span class="art">${t('art')} ${d.limits.article}</span></p>
     <p class="small muted">${t('band.rule')}</p>${d.limits.reason === 'noCgpa' ? `<p class="small muted">${t('band.unknownHint')}</p>` : ''}</section>`;
   // Passed ECTS
   h += `<section class="card dcard" data-testid="card-ects-passed" aria-labelledby="c-pe"><h2 id="c-pe" class="dcard-t">${ic('check')}${t('home.passed')}</h2>
     <p class="metric">${passedEcts}<span class="metric-of"> / ${TOTAL_ECTS} ${t('ects')}</span></p>
-    <div class="meter" aria-hidden="true"><span style="width:${(passedEcts / TOTAL_ECTS) * 100}%"></span></div>
-    <p class="small muted">${t('home.passedNote', { pct: Math.round((passedEcts / TOTAL_ECTS) * 100) })}</p></section>`;
+    <div class="meter" aria-hidden="true"><span style="width:${pct * 100}%"></span></div>
+    <p class="small muted">${t('home.passedNote', { pct: Math.round(pct * 100) })}</p></section>`;
+  // Earliest graduation
+  h += PG.graduationCard(ctx);
   // Registration status
   h += `<section class="card dcard" data-testid="card-reg-status" aria-labelledby="c-rs"><h2 id="c-rs" class="dcard-t">${ic('book')}${t('home.regStatus')}</h2>
     <p>${regStatusBadge('dash-reg-status')}</p>
     <p class="small">${t('home.regLine', { n: d.selected.length, ects: d.sum.total, max: d.limits.max })}</p>
-    ${state.reg === 'pending' && state.sentAt ? `<p class="small muted">${t('home.sentAt', { at: esc(new Date(state.sentAt).toLocaleString(state.lang === 'tr' ? 'tr-TR' : 'en-GB')) })}</p>` : `<p class="small muted">${t('home.regSteps')}</p>`}</section>`;
+    ${state.reg === 'pending' && state.sentAt ? `<p class="small muted">${t('home.sentAt', { at: esc(new Date(state.sentAt).toLocaleString(locale())) })}</p>` : `<p class="small muted">${t('home.regSteps')}</p>`}</section>`;
   // Advisor
   h += `<section class="card dcard" data-testid="card-advisor" aria-labelledby="c-ad"><h2 id="c-ad" class="dcard-t">${ic('advisor')}${t('home.advisor')}</h2>
     <p class="big">${esc(DEMO_STUDENT.advisor)}</p><p class="small muted">${t('home.advisorNote')}</p></section>`;
-  // Call to action
-  h += `<section class="card dcard dcard-cta" aria-labelledby="c-cta"><h2 id="c-cta" class="dcard-t">${ic('calendar')}${t('home.ctaTitle', { term: esc(term()) })}</h2>
+  h += `</div>`;
+
+  const x = PG.dashExtras(ctx, d);
+  const cta = `<section class="card dcard dcard-cta" aria-labelledby="c-cta"><h2 id="c-cta" class="dcard-t">${ic('calendar')}${t('home.ctaTitle', { term: esc(term()) })}</h2>
     <p class="small">${t('home.ctaText')}</p>
     <a class="btn btn-primary btn-lg" href="#register" data-testid="start-registration">${state.reg === 'pending' ? t('home.ctaView') : t('home.cta')}${ic('arrow')}</a></section>`;
-  h += `</div>`;
+  h += `<div class="dash-cols"><div class="dash-col">${x.att}${cta}</div><div class="dash-col">${x.tt}${x.dates}</div></div>`;
   return h;
 }
 
@@ -752,7 +909,7 @@ function viewStatus(d) {
   let h = `<header class="page-head"><p class="crumb">${t('nav.status')}</p><h1 id="view-title" tabindex="-1">${t('status.title')}</h1><p class="lead">${t('status.lead')}</p></header>`;
 
   h += `<section class="card" aria-labelledby="prof-t"><div class="card-head"><h2 id="prof-t" class="h3">${t('status.profile')}</h2>
-      <div class="btns"><button type="button" class="btn btn-small" id="btn-sample" data-act="sample" data-testid="profile-load-sample">${t('first.sample')}</button>
+      <div class="btns"><a class="btn btn-small" href="#import" data-testid="status-import">${ic('upload')}${t('status.import')}</a><button type="button" class="btn btn-small" id="btn-sample" data-act="sample" data-testid="profile-load-sample">${t('first.sample')}</button>
       <button type="button" class="btn btn-small btn-danger" id="btn-reset" data-act="reset" data-testid="profile-reset">${t('status.reset')}</button></div></div>
     <p class="small muted">${t('first.note')}</p>
     <div class="fields">
@@ -765,7 +922,7 @@ function viewStatus(d) {
     </div>
     <p class="band" id="band-line">${bandLine(d.limits)}</p>
     <div class="progress"><div class="progress-txt">${t('status.progress', { n: passedEcts, total: TOTAL_ECTS })}</div>
-      <div class="meter" aria-hidden="true"><span style="width:${(passedEcts / TOTAL_ECTS) * 100}%"></span></div></div>
+      <div class="meter" aria-hidden="true"><span style="width:${(U.ratio(passedEcts, TOTAL_ECTS) || 0) * 100}%"></span></div></div>
   </section>`;
 
   for (const s of DATA.semesters) {
@@ -800,8 +957,10 @@ function viewRules() {
   h += `</ul><p class="note">${t('rules.limitNote')}</p><p class="note">${esc(OBSERVED[L])}</p></section>`;
   h += `<section class="card" aria-labelledby="src-t"><h2 id="src-t" class="h3">${t('rules.srcTitle')}</h2><p>${t('rules.collected', { date: META.collected, term: esc(term()) })}</p><ul class="bul">`;
   for (const s of META.sources) h += `<li>${t('rules.src.' + s.id)}<br><a href="${esc(s.url)}" rel="noopener noreferrer" target="_blank" class="url">${esc(s.url)}</a></li>`;
-  h += `<li>${t('rules.src.timetable')}</li><li>${t('rules.src.names')}</li></ul></section>`;
-  h += `<section class="card" aria-labelledby="gap-t"><h2 id="gap-t" class="h3">${t('rules.gapTitle')}</h2><ul class="bul">${['g1', 'g2', 'g3', 'g4', 'g5'].map((k) => `<li>${t('rules.' + k)}</li>`).join('')}</ul></section>`;
+  h += `<li>${t('rules.src.timetable')}</li><li>${t('rules.src.names')}</li>
+    <li>${t('rules.src.calendar', { date: EXTRA_META.collected })}<br><a href="${esc(EXTRA_META.calendarUrl)}" rel="noopener noreferrer" target="_blank" class="url">${esc(EXTRA_META.calendarUrl)}</a></li>
+    <li>${t('rules.src.assessment', { date: EXTRA_META.collected })}</li><li>${t('rules.src.attendance')}</li></ul></section>`;
+  h += `<section class="card" aria-labelledby="gap-t"><h2 id="gap-t" class="h3">${t('rules.gapTitle')}</h2><ul class="bul">${['g1', 'g2', 'g3', 'g4', 'g5', 'g6', 'g7', 'g8'].map((k) => `<li>${t('rules.' + k)}</li>`).join('')}</ul></section>`;
   return h;
 }
 
@@ -1054,6 +1213,18 @@ function renderSummary() {
   }
 }
 
+function renderCourseDlg() {
+  const dlg = $('#dlg-course');
+  if (!dlg.open || !ui.courseDlg) return;
+  const active = document.activeElement && dlg.contains(document.activeElement) ? document.activeElement.id : null;
+  $('#cd-inner').innerHTML = PG.courseDrawer(ctx, derive(), ui.courseDlg);
+  if (active) {
+    const el = document.getElementById(active);
+    if (el) el.focus({ preventScroll: true });
+    else { const b = $('#cd-close'); if (b) b.focus({ preventScroll: true }); }
+  }
+}
+
 function openSummary(opener) {
   ui.sent = false;
   openDialog('dlg-summary', opener);
@@ -1107,6 +1278,7 @@ function closeDialog(id) {
 function afterClose(id) {
   if (id === 'dlg-suggest') ui.sg = null;
   if (id === 'dlg-summary') ui.sent = false;
+  if (id === 'dlg-course') ui.courseDlg = null;
   if (!(id in ui.openers)) return;
   const key = ui.openers[id];
   delete ui.openers[id];
@@ -1137,8 +1309,11 @@ function exportText(d) {
   return L.join('\n');
 }
 
-async function copyText() {
-  const text = exportText(derive());
+function copyText() {
+  return copyString(exportText(derive()));
+}
+
+async function copyString(text) {
   let ok = false;
   try {
     await navigator.clipboard.writeText(text);
@@ -1165,6 +1340,11 @@ async function copyText() {
 }
 
 function renderPrintArea(d) {
+  if (view === 'regday') {
+    $('#print-area').innerHTML = `<h1>Kayıt Pilotu — ${t('nav.regday')}</h1><pre class="print-pre">${esc(PG.regdayText(ctx, d))}</pre>
+      <p class="small">${t('foot.disclaimer')}</p>`;
+    return;
+  }
   $('#print-area').innerHTML = `<h1>Kayıt Pilotu — ${t('nav.timetable')}</h1>
     <p>${esc(DEMO_STUDENT.name)} (${t('demo.fictional')}) · ${esc(term())} · ${esc(program())} · ${t('reg.' + state.reg)}</p>
     ${gridHtml(chosenBlocks(d), d.hue, { testid: 'print-grid', cls: 'tt-print' })}${courseTable(d, 'print')}
@@ -1347,6 +1527,14 @@ function render({ focusTitle = false } = {}) {
   else if (view === 'register') html = viewRegister(d);
   else if (view === 'timetable') html = viewTimetable(d);
   else if (view === 'status') html = viewStatus(d);
+  else if (view === 'catalogue') html = PG.viewCatalogue(ctx, d);
+  else if (view === 'regday') html = PG.viewRegday(ctx, d);
+  else if (view === 'attendance') html = PG.viewAttendance(ctx, d);
+  else if (view === 'grades') html = PG.viewGrades(ctx, d);
+  else if (view === 'calendar') html = PG.viewCalendar(ctx, d);
+  else if (view === 'roadmap') html = PG.viewRoadmap(ctx, d);
+  else if (view === 'import') html = PG.viewImport(ctx, d);
+  else if (view === 'compare') html = PG.viewCompare(ctx, d);
   else html = viewRules();
   const main = $('#main');
   main.innerHTML = html;
@@ -1453,6 +1641,11 @@ document.addEventListener('click', (e) => {
     case 'enter':
       setEntered(true);
       render({ focusTitle: true });
+      return;
+    case 'enter-import':
+      setEntered(true);
+      if (location.hash === '#import') render({ focusTitle: true });
+      else location.hash = '#import';
       return;
     case 'logout':
       leave();
@@ -1567,19 +1760,23 @@ document.addEventListener('click', (e) => {
       window.print();
       return;
     default:
+      PG.handleClick(ctx, act, el);
       return;
   }
   render();
   renderSuggest();
   renderSummary();
+  renderCourseDlg();
 });
 
 document.addEventListener('change', (e) => {
   const el = e.target.closest('[data-chg]');
   if (!el) {
-    if (e.target.closest('[data-inp]')) render();
+    const inp = e.target.closest('[data-inp]');
+    if (inp && (inp.dataset.inp === 'cgpa' || inp.dataset.inp === 'semesters')) render();
     return;
   }
+  if (PG.handleChange(ctx, el)) return;
   const chg = el.dataset.chg;
   if (chg === 'status') {
     setStatus(el.dataset.code, el.value);
@@ -1609,6 +1806,7 @@ document.addEventListener('change', (e) => {
 document.addEventListener('input', (e) => {
   const el = e.target.closest('[data-inp]');
   if (!el) return;
+  if (PG.handleInput(ctx, el)) return;
   if (el.dataset.inp === 'cgpa') state.profile.cgpa = parseCgpa(el.value);
   else state.profile.semestersCompleted = Math.max(0, Math.min(20, parseInt(el.value, 10) || 0));
   profileChanged();
@@ -1618,7 +1816,15 @@ document.addEventListener('input', (e) => {
   save();
 });
 
+document.addEventListener('submit', (e) => {
+  const form = e.target.closest('form');
+  if (!form) return;
+  e.preventDefault();
+  PG.handleSubmit(ctx, form);
+});
+
 document.addEventListener('toggle', (e) => {
+  if (e.target.id === 'det-thresholds') ui.openTh = e.target.open;
   if (e.target.id === 'det-electives') state.openElectives = e.target.open;
   if (e.target.id === 'det-others') state.openOthers = e.target.open;
   if (e.target.id === 'sg-opt' && ui.sg) ui.sg.openMore = e.target.open;
@@ -1628,7 +1834,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && ui.navOpen && !document.querySelector('dialog[open]')) setNav(false, { returnFocus: true });
 });
 
-for (const id of ['dlg-suggest', 'dlg-summary']) {
+for (const id of DIALOGS) {
   const dlg = $('#' + id);
   dlg.addEventListener('cancel', (e) => {
     // Escape
@@ -1647,12 +1853,36 @@ window.addEventListener('hashchange', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Context handed to the page module (js/pages.js)
+// ---------------------------------------------------------------------------
+const ctx = {
+  get state() { return state; },
+  ui,
+  cache: {},
+  TODAY,
+  t, esc, ta, ic, lbl, course, cname, cnamePlain, term, times, codeList, missingText, secCountText,
+  gridHtml, chosenBlocks, miniGrid, hueMap,
+  derive, render, save, say, openDialog, closeDialog, renderCourseDlg,
+  locale, num, fmtDate, termLabel, isSampleProfile, downloadText, applyImport,
+  now: () => new Date(),
+  demoName: () => `${DEMO_STUDENT.name} (${t('demo.fictional')})`,
+  copy: (text) => copyString(text),
+};
+
+// The registration-day countdown ticks while that page is open.
+setInterval(() => {
+  if (view !== 'regday' || !entered) return;
+  const el = $('#rd-countdown');
+  if (el) el.textContent = PG.countdownText(ctx);
+}, 30000);
+
+// ---------------------------------------------------------------------------
 // Demo hooks for screen recordings (?demo=1)
 // ---------------------------------------------------------------------------
 if (DEMO) document.documentElement.classList.add('is-demo');
 
 function leave() {
-  for (const id of ['dlg-suggest', 'dlg-summary']) closeDialog(id);
+  for (const id of DIALOGS) closeDialog(id);
   if (ui.navOpen) setNav(false);
   setEntered(false);
   render();
@@ -1681,12 +1911,15 @@ window.kpDemo = {
   /** Restore the fictional sample student and clear the registration (keeps the language and the page). */
   reset() {
     const lang = state.lang;
-    for (const id of ['dlg-suggest', 'dlg-summary']) closeDialog(id);
+    for (const id of DIALOGS) closeDialog(id);
     state = withSample(fresh());
     state.lang = lang;
     ui.focus = null;
     ui.sg = null;
     ui.sent = false;
+    ui.imp = null;
+    ui.impDone = null;
+    ui.cat = { ...PG.CAT_DEFAULT };
     if (ui.navOpen) setNav(false);
     render();
   },
@@ -1703,7 +1936,12 @@ window.kpDemo = {
       totalEcts: d.sum.total,
       maxEcts: d.limits.max,
       regStatus: state.reg,
+      today: TODAY,
     };
+  },
+  /** The .ics text the calendar page would download (same options as on the page). */
+  icsText() {
+    return PG.buildCalendarIcs(ctx, derive()).text;
   },
   /** The PNG export as a data URL (same drawing as the download button). */
   pngDataUrl() {
